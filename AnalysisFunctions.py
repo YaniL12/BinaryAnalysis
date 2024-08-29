@@ -5,6 +5,7 @@ import sys
 import os
 from pathlib import Path
 import logging
+import pickle
 
 # Astropy packages
 from astropy.table import Table
@@ -17,6 +18,7 @@ n = u.def_unit('n')
 import scipy
 from scipy.optimize import curve_fit
 from scipy import signal
+from scipy.interpolate import LinearNDInterpolator
 
 
 # Matplotlib packages
@@ -26,9 +28,42 @@ import warnings
 warnings.filterwarnings('ignore', category=UserWarning, append=True)
 warnings.filterwarnings('ignore')
 
-
+working_directory = '/avatar/yanilach/PhD-Home/binaries_galah-main/spectrum_analysis/BinaryAnalysis/'
+os.chdir(working_directory)
 
 galah_dr4_directory = '/avatar/buder/GALAH_DR4/'
+
+def load_isochrones():
+    global isochrone_interpolator
+
+    print(working_directory)
+    if os.path.exists(working_directory + '/assets/parsec_interpolator.pkl'):
+        with open(working_directory + '/assets/parsec_interpolator.pkl', 'rb') as f:
+            isochrone_interpolator = pickle.load(f)
+            return isochrone_interpolator
+
+    else:
+        print("No isochrone interpolator found. Creating interpolator - this could take a while (20-40m).")
+        isochrone_table = Table.read('BinaryAnalysis/assets/parsec_isochrones_logt_8p00_0p01_10p17_mh_m2p75_0p25_m0p75_mh_m0p60_0p10_0p70_GaiaEDR3_2MASS.fits')
+
+        parsec_points = np.array([isochrone_table['mass'], isochrone_table['logAge'], isochrone_table['m_h']]).T
+        parsec_values_lite = np.array([isochrone_table['logT'], isochrone_table['logg'], isochrone_table['logL']]).T
+
+        isochrone_interpolator = LinearNDInterpolator(
+            parsec_points,
+            parsec_values_lite
+        )
+
+        print("Isochrone interpolator created. Saving to file.")
+
+        with open('/assets/parsec_interpolator.pkl', 'wb') as f:
+            pickle.dump(isochrone_interpolator, f)
+
+        with open('/assets/parsec_interpolator.pkl', 'rb') as f:
+            isochrone_interpolator = pickle.load(f)
+
+        return isochrone_interpolator
+
 
 def load_neural_network(spectrum):
     global model_name, default_wave_dir, default_model_wave, initial_l, model_components
@@ -283,30 +318,43 @@ def get_spectrum_from_neural_net(scaled_labels, NN_coeffs):
     return spectrum
 
 # %%
-def create_synthetic_spectrum(model_parameters, model_labels, default_model=None, default_model_name=None, debug=True, apply_zeropoints=False):
+def create_synthetic_spectrum(model_parameters, model_labels, model_label_indices, default_model=None, default_model_name=None, debug=True, apply_zeropoints=False):
     
-    model_parameters = np.array(model_parameters)
+    """
+    This function creates a synthetic spectrum from a neural network model for each individual star.
+    Pass each star's individual labels and paramater values.
+    """
+    # print("Creating synthetic spectrum")
+    # print(model_parameters)
+    # print(model_labels)
+
+    # model_parameters = np.array(model_parameters)
     
     if 'teff' in model_labels:
-        teff = 1000.*model_parameters[model_labels=='teff'][0]
+        teff = 1000. * model_parameters['teff']
+        # teff = 1000. * model_parameters[model_label_indices['teff']]
     else:
         raise ValueError('You have to define Teff as input parameter')
     if 'logg' in model_labels:
-        logg = model_parameters[model_labels=='logg'][0]
+        logg = model_parameters['logg']
+        # logg = model_parameters[model_label_indices['logg']]
     else:
         raise ValueError('You have to define logg as input parameter')
     if 'fe_h' in model_labels:
-        fe_h = model_parameters[model_labels=='fe_h'][0]
+        fe_h = model_parameters['fe_h']
+        # fe_h = model_parameters[model_label_indices['fe_h']]
     else:
         raise ValueError('You have to define fe_h as input parameter')
 
     if 'vmic' in model_labels:
-        vmic = model_parameters[model_labels=='vmic'][0]
+        vmic = model_parameters['vmic']
+        # vmic =model_parameters[model_label_indices['vmic']]
     else:
         raise ValueError('You have to define vmic as input parameter')
 
     if 'vsini' in model_labels:
-        vsini = model_parameters[model_labels=='vsini'][0]
+        vsini = model_parameters['vsini']
+        # vsini = model_parameters[model_label_indices['vsini']]
     else:
         raise ValueError('You have to define vsini as input parameter')
 
@@ -315,9 +363,9 @@ def create_synthetic_spectrum(model_parameters, model_labels, default_model=None
         teff, logg, fe_h, vmic, vsini
     ])
 
-    scaled_labels = (model_labels-model_components[-2])/(model_components[-1]-model_components[-2]) - 0.5
+    scaled_labels = (model_labels - model_components[-2])/(model_components[-1] - model_components[-2]) - 0.5
 
-    model_flux = get_spectrum_from_neural_net(scaled_labels,model_components)
+    model_flux = get_spectrum_from_neural_net(scaled_labels, model_components)
 
     return(
         model_flux
@@ -620,43 +668,69 @@ def rv_shift(rv_value, wavelength):
 # ## 2.3) Create synthetic spectra for a binary star system
 
 # %%
-def create_synthetic_binary_spectrum_at_observed_wavelength(model_parameters, model_labels, spectrum, same_fe_h = True):
+def create_synthetic_binary_spectrum_at_observed_wavelength(model, spectrum, same_fe_h = True):
+    # print("Model parameters")
+    # print(model_parameters)
 
-    model_parameters = np.array(model_parameters)
+    # model = model_parameters
+    model_parameters = np.array(model.get_params())
     
-    if 'f_contr' not in model_labels:
+    if 'f_contr' not in model.model_labels:
         raise ValueError('f_contr has to be part of the model_labels')
     else:
-        f_contr = model_parameters[model_labels == 'f_contr'][0]
+        f_contr = model.params['f_contr']
+        # f_contr = model_parameters[model.label('f_contr')]
         
-    if 'rv_1' not in model_labels:
+    if 'rv_1' not in model.model_labels:
         raise ValueError('rv_1 has to be part of the model_labels')
     else:
-        rv_1 = model_parameters[model_labels == 'rv_1'][0]
+        rv_1 = model.params['rv_1']
+        # rv_1 = model_parameters[model.label('rv_1')]
         
-    if 'rv_2' not in model_labels:
+    if 'rv_2' not in model.model_labels:
         raise ValueError('rv_2 has to be part of the model_labels')
     else:
-        rv_2 = model_parameters[model_labels == 'rv_2'][0]        
+        rv_2 = model.params['rv_2']    
+        # rv_2 = model_parameters[model.label('rv_2')]
     
-    component_1 = [label[-2:] == '_1' for label in model_labels]
-    component_1_labels = np.array([label[:-2] for label in model_labels[component_1]])
-    component_1_model_parameter = model_parameters[component_1]
+    # # This is a mask
+    # component_1 = [label[-2:] == '_1' for label in model_labels]
 
-    component_2 = [label[-2:] == '_2' for label in model_labels]
-    component_2_labels = np.array([label[:-2] for label in model_labels[component_2]])
-    component_2_model_parameter = model_parameters[component_2]
+    # # This is a list of labels for the first component in plaintext
+    # component_1_labels = np.array([label[:-2] for label in model_labels[component_1]])
 
+    # # This is the actual values for the parameters
+    # component_1_model_parameter = model_parameters[component_1]
+
+    # Either update the model class variables here or create a duplicate so the optimisation can modify them.
+
+
+    component_1_labels = model.get_unique_labels()
+    # component_1_model_parameter = model_parameters[model.get_comp_mask(1)]
+    component_1_model_parameter = model.get_component_params(1)
+
+
+    # component_2 = [label[-2:] == '_2' for label in model_labels]
+    # component_2_labels = np.array([label[:-2] for label in model_labels[component_2]])
+    # component_2_model_parameter = model_parameters[component_2]
+
+    component_2_labels = model.get_unique_labels()
+    # component_2_model_parameter = model_parameters[model.get_comp_mask(2)]
+    component_2_model_parameter = model.get_component_params(2)
+
+
+#   TODO Fix this part for new object oriented model
     if same_fe_h:
         component_1_labels = np.insert(component_1_labels,3,'fe_h')
         component_2_labels = np.insert(component_2_labels,3,'fe_h')
     
-        component_1_model_parameter = np.insert(component_1_model_parameter,3,model_parameters[model_labels=='fe_h'][0])
-        component_2_model_parameter = np.insert(component_2_model_parameter,3,model_parameters[model_labels=='fe_h'][0])
+        component_1_model_parameter = np.insert(component_1_model_parameter, 3, model_parameters[model_labels=='fe_h'][0])
+        component_2_model_parameter = np.insert(component_2_model_parameter, 3, model_parameters[model_labels=='fe_h'][0])
+
 
     # This returns synthetic spectra for each component created by the neural network
-    component_1_model = create_synthetic_spectrum(component_1_model_parameter, component_1_labels)
-    component_2_model = create_synthetic_spectrum(component_2_model_parameter, component_2_labels)
+    component_1_model = create_synthetic_spectrum(component_1_model_parameter, component_1_labels, model.unique_indices)
+    component_2_model = create_synthetic_spectrum(component_2_model_parameter, component_2_labels, model.unique_indices)
     
     for ccd in spectrum['available_ccds']:
         
@@ -705,32 +779,40 @@ def create_synthetic_binary_spectrum_at_observed_wavelength(model_parameters, mo
     wave = np.concatenate([spectrum['wave_ccd'+str(ccd)] for ccd in spectrum['available_ccds']])
     data = np.concatenate([spectrum['flux_obs_ccd'+str(ccd)] for ccd in spectrum['available_ccds']])
     sigma2 = np.concatenate([spectrum['flux_obs_unc_ccd'+str(ccd)] for ccd in spectrum['available_ccds']])**2
-    model = np.concatenate([spectrum['flux_model_ccd'+str(ccd)] for ccd in spectrum['available_ccds']])
+    data_model = np.concatenate([spectrum['flux_model_ccd'+str(ccd)] for ccd in spectrum['available_ccds']])
+
+    # Repack the model parameters into the array
+    # model_parameters = np.concatenate([[f_contr], [rv, 'teff', 'logg', 'fe_h', 'vmic', 'vsini'], component_2_model_parameter])
+    # print("Model parameters")
+    # print([[f_contr, rv_1], model.get_component_params(1, values_only=True), [rv_2], component_2_model_parameter])
+    model_parameters = np.concatenate([[f_contr, rv_1], model.get_component_params(1, values_only=True)[1:], [rv_2], model.get_component_params(2, values_only=True)[1:]])
+    # print("Model parameters: ", model_parameters)
+    model.set_params(model_parameters)
 
     return(
-        wave,data,sigma2,model
+        wave, data, sigma2, data_model, model
     )
 
-def return_wave_data_sigma_model(model_parameters, model_labels, spectrum, same_fe_h = True, use_solar_spectrum_mask = False):
+def return_wave_data_sigma_model(model, spectrum, same_fe_h = True, use_solar_spectrum_mask = False):
     
-    wave,data,sigma2,model = create_synthetic_binary_spectrum_at_observed_wavelength(model_parameters, model_labels, spectrum, same_fe_h)
+    wave, data, sigma2, data_model, model = create_synthetic_binary_spectrum_at_observed_wavelength(model, spectrum, same_fe_h)
 
-    wave = rv_shift(model_parameters[model_labels == 'rv_1'][0],wave)
+    wave = rv_shift(model.params['rv_1'], wave)
 
     if use_solar_spectrum_mask:
         # Note: This time we only mask significant outliers, but neglect the line masks
         unmasked = (
-                (~((np.abs(data-model)/np.sqrt(sigma2) > 5) & (np.abs(data-model) > 0.2))) & 
+                (~((np.abs(data - data_model)/np.sqrt(sigma2) > 5) & (np.abs(data - data_model) > 0.2))) & 
                 (~np.any(np.array([((wave >= mask_beginning) & (wave <= mask_end)) for (mask_beginning, mask_end) in zip(masks['mask_begin'],masks['mask_end'])]),axis=0))
             )
     else:
         # Note: This time we only mask significant outliers, but neglect the line masks
         unmasked = (
-                (~((np.abs(data-model)/np.sqrt(sigma2) > 5) & (np.abs(data-model) > 0.2))) #& 
+                (~((np.abs(data - data_model)/np.sqrt(sigma2) > 5) & (np.abs(data - data_model) > 0.2))) #& 
                 #(~np.any(np.array([((wave >= mask_beginning) & (wave <= mask_end)) for (mask_beginning, mask_end) in zip(masks['mask_begin'],masks['mask_end'])]),axis=0))
             )
 
-    return(wave, data, sigma2, model, unmasked)
+    return(wave, data, sigma2, data_model, unmasked)
 
 
 def set_iterations(_n):
@@ -739,15 +821,18 @@ def set_iterations(_n):
 
 
 # %%
-def get_flux_only(wave_init, model_labels, spectrum, same_fe_h, unmasked, *model_parameters):
+def get_flux_only(wave_init, model, spectrum, same_fe_h, unmasked, *model_parameters):
     """
     This will be used as interpolation routine to give back a synthetic flux based on the curve_fit parameters
     """
     # Call to GAIA interpolator for teff_1, logg_1 etc.
 
+    # THIS IS THE CRUCIAL LINE THAT UPDATES THE MODEL PARAMETERS
+    model.set_params(model_parameters)
+
     # Override f_contr with the value.
 
-    wave,data,sigma2,model = create_synthetic_binary_spectrum_at_observed_wavelength(model_parameters, model_labels, spectrum, same_fe_h)
+    wave, data, sigma2, model, stellar_model = create_synthetic_binary_spectrum_at_observed_wavelength(model, spectrum, same_fe_h)
 
     global iterations
     
@@ -790,6 +875,8 @@ def get_flux_only(wave_init, model_labels, spectrum, same_fe_h, unmasked, *model
         plt.suptitle(model_agreement_percentage)
         plt.tight_layout()
         plt.show()
+    # else:
+    #     print(100 * np.sum(abs(model - data)) / len(data))
 
     return(model[unmasked])
 
