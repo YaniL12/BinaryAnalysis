@@ -318,43 +318,33 @@ def get_spectrum_from_neural_net(scaled_labels, NN_coeffs):
     return spectrum
 
 # %%
-def create_synthetic_spectrum(model_parameters, model_labels, model_label_indices, default_model=None, default_model_name=None, debug=True, apply_zeropoints=False):
+def create_synthetic_spectrum(model_parameters, model_labels, default_model=None, default_model_name=None, debug=True, apply_zeropoints=False):
     
     """
     This function creates a synthetic spectrum from a neural network model for each individual star.
     Pass each star's individual labels and paramater values.
     """
-    # print("Creating synthetic spectrum")
-    # print(model_parameters)
-    # print(model_labels)
-
-    # model_parameters = np.array(model_parameters)
     
     if 'teff' in model_labels:
         teff = 1000. * model_parameters['teff']
-        # teff = 1000. * model_parameters[model_label_indices['teff']]
     else:
         raise ValueError('You have to define Teff as input parameter')
     if 'logg' in model_labels:
         logg = model_parameters['logg']
-        # logg = model_parameters[model_label_indices['logg']]
     else:
         raise ValueError('You have to define logg as input parameter')
     if 'fe_h' in model_labels:
         fe_h = model_parameters['fe_h']
-        # fe_h = model_parameters[model_label_indices['fe_h']]
     else:
         raise ValueError('You have to define fe_h as input parameter')
 
     if 'vmic' in model_labels:
         vmic = model_parameters['vmic']
-        # vmic =model_parameters[model_label_indices['vmic']]
     else:
         raise ValueError('You have to define vmic as input parameter')
 
     if 'vsini' in model_labels:
         vsini = model_parameters['vsini']
-        # vsini = model_parameters[model_label_indices['vsini']]
     else:
         raise ValueError('You have to define vsini as input parameter')
 
@@ -669,53 +659,29 @@ def rv_shift(rv_value, wavelength):
 
 # %%
 def create_synthetic_binary_spectrum_at_observed_wavelength(model, spectrum, same_fe_h = True):
-    # print("Model parameters")
-    # print(model_parameters)
-
-    # model = model_parameters
-    model_parameters = np.array(model.get_params())
+    # We use the binary model object to extract the parameters of the two components.
+    # The model is updated here and in the get_flux_only call for curve fitting.
     
     if 'f_contr' not in model.model_labels:
         raise ValueError('f_contr has to be part of the model_labels')
     else:
         f_contr = model.params['f_contr']
-        # f_contr = model_parameters[model.label('f_contr')]
         
     if 'rv_1' not in model.model_labels:
         raise ValueError('rv_1 has to be part of the model_labels')
     else:
         rv_1 = model.params['rv_1']
-        # rv_1 = model_parameters[model.label('rv_1')]
         
     if 'rv_2' not in model.model_labels:
         raise ValueError('rv_2 has to be part of the model_labels')
     else:
         rv_2 = model.params['rv_2']    
-        # rv_2 = model_parameters[model.label('rv_2')]
-    
-    # # This is a mask
-    # component_1 = [label[-2:] == '_1' for label in model_labels]
-
-    # # This is a list of labels for the first component in plaintext
-    # component_1_labels = np.array([label[:-2] for label in model_labels[component_1]])
-
-    # # This is the actual values for the parameters
-    # component_1_model_parameter = model_parameters[component_1]
-
-    # Either update the model class variables here or create a duplicate so the optimisation can modify them.
 
 
     component_1_labels = model.get_unique_labels()
-    # component_1_model_parameter = model_parameters[model.get_comp_mask(1)]
     component_1_model_parameter = model.get_component_params(1)
 
-
-    # component_2 = [label[-2:] == '_2' for label in model_labels]
-    # component_2_labels = np.array([label[:-2] for label in model_labels[component_2]])
-    # component_2_model_parameter = model_parameters[component_2]
-
     component_2_labels = model.get_unique_labels()
-    # component_2_model_parameter = model_parameters[model.get_comp_mask(2)]
     component_2_model_parameter = model.get_component_params(2)
 
 
@@ -729,8 +695,8 @@ def create_synthetic_binary_spectrum_at_observed_wavelength(model, spectrum, sam
 
 
     # This returns synthetic spectra for each component created by the neural network
-    component_1_model = create_synthetic_spectrum(component_1_model_parameter, component_1_labels, model.unique_indices)
-    component_2_model = create_synthetic_spectrum(component_2_model_parameter, component_2_labels, model.unique_indices)
+    component_1_model = create_synthetic_spectrum(component_1_model_parameter, component_1_labels)
+    component_2_model = create_synthetic_spectrum(component_2_model_parameter, component_2_labels)
     
     for ccd in spectrum['available_ccds']:
         
@@ -782,11 +748,7 @@ def create_synthetic_binary_spectrum_at_observed_wavelength(model, spectrum, sam
     data_model = np.concatenate([spectrum['flux_model_ccd'+str(ccd)] for ccd in spectrum['available_ccds']])
 
     # Repack the model parameters into the array
-    # model_parameters = np.concatenate([[f_contr], [rv, 'teff', 'logg', 'fe_h', 'vmic', 'vsini'], component_2_model_parameter])
-    # print("Model parameters")
-    # print([[f_contr, rv_1], model.get_component_params(1, values_only=True), [rv_2], component_2_model_parameter])
     model_parameters = np.concatenate([[f_contr, rv_1], model.get_component_params(1, values_only=True)[1:], [rv_2], model.get_component_params(2, values_only=True)[1:]])
-    # print("Model parameters: ", model_parameters)
     model.set_params(model_parameters)
 
     return(
@@ -821,7 +783,7 @@ def set_iterations(_n):
 
 
 # %%
-def get_flux_only(wave_init, model, spectrum, same_fe_h, unmasked, *model_parameters):
+def get_flux_only(wave_init, model, spectrum, same_fe_h, unmasked, *model_parameters, plot=False):
     """
     This will be used as interpolation routine to give back a synthetic flux based on the curve_fit parameters
     """
@@ -836,47 +798,47 @@ def get_flux_only(wave_init, model, spectrum, same_fe_h, unmasked, *model_parame
 
     global iterations
     
-    # plotting_callback.plot_wave_init()
-    iterations += 1
-    if iterations % 10 == 0:
-    # Plot the wave_init and model
-        fig, axes = plt.subplots(1, 10, figsize=(30, 5), sharey=True)
+    if plot:
+        iterations += 1
+        if iterations % 10 == 0:
+        # Plot the wave_init and model
+            fig, axes = plt.subplots(1, 10, figsize=(30, 5), sharey=True)
 
-        # Iterate over each line and corresponding subplot
-        for i, line in enumerate(important_lines[0:10]):
-            # Define the region to plot: line ± 5 Å
-            line_wvl = line[0]
-            min_wave = line_wvl - 5
-            max_wave = line_wvl + 5
-            
-            # Select data within the specified wavelength range
-            mask = (wave >= min_wave) & (wave <= max_wave)
-            
-            # Plot data and model in the corresponding subplot
-            axes[i].plot(wave[mask], data[mask], label='Observed Data')
-            axes[i].plot(wave[mask], model[mask], label='Model Fit', linestyle='--')
+            # Iterate over each line and corresponding subplot
+            for i, line in enumerate(important_lines[0:10]):
+                # Define the region to plot: line ± 5 Å
+                line_wvl = line[0]
+                min_wave = line_wvl - 5
+                max_wave = line_wvl + 5
+                
+                # Select data within the specified wavelength range
+                mask = (wave >= min_wave) & (wave <= max_wave)
+                
+                # Plot data and model in the corresponding subplot
+                axes[i].plot(wave[mask], data[mask], label='Observed Data')
+                axes[i].plot(wave[mask], model[mask], label='Model Fit', linestyle='--')
 
-            difference = abs(model[mask] - data[mask])
-            axes[i].plot(wave[mask], difference, label='Model Delta', linestyle='--')
-            axes[i].fill_between(wave[mask], 0, difference, color='gray', alpha=0.3)
+                difference = abs(model[mask] - data[mask])
+                axes[i].plot(wave[mask], difference, label='Model Delta', linestyle='--')
+                axes[i].fill_between(wave[mask], 0, difference, color='gray', alpha=0.3)
 
-            
-            # Set subplot title and labels
-            axes[i].set_title(f'{line[1]} ({line[0]} Å)')
-            axes[i].set_xlabel('Wavelength')
-            if i == 0:
-                axes[i].set_ylabel('Flux')
-            
-            # Add legend
-            axes[i].legend()
+                
+                # Set subplot title and labels
+                axes[i].set_title(f'{line[1]} ({line[0]} Å)')
+                axes[i].set_xlabel('Wavelength')
+                if i == 0:
+                    axes[i].set_ylabel('Flux')
+                
+                # Add legend
+                # axes[i].legend()
 
-        # Adjust layout to prevent overlap
-        model_agreement_percentage = 100 * np.sum(abs(model - data)) / len(data)
-        plt.suptitle(model_agreement_percentage)
-        plt.tight_layout()
-        plt.show()
-    # else:
-    #     print(100 * np.sum(abs(model - data)) / len(data))
+            # Adjust layout to prevent overlap
+            model_agreement_percentage = 100 * np.sum(abs(model - data)) / len(data)
+            plt.suptitle(model_agreement_percentage)
+            plt.tight_layout()
+            plt.show()
+        # else:
+        #     print(100 * np.sum(abs(model - data)) / len(data))
 
     return(model[unmasked])
 
