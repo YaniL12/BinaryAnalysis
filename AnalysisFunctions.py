@@ -65,6 +65,33 @@ def load_isochrones():
         return isochrone_interpolator
 
 
+# This is for printing only. The model has it's own code.
+def interpolate_isochrone(mass, age, m_h):
+    """
+    Input mass, age, and metallicity. Outputs Teff, logg, and logL
+    # mass: mass of the star in solar masses
+    # age: age of the star in GYR
+    # m_h: metallicity of the star in [Fe/H]
+    """
+    global isochrone_interpolator
+
+    if not isochrone_interpolator:
+        isochrone_interpolator = load_isochrones()
+
+    teff, logg, logl = isochrone_interpolator(
+        mass, 
+        np.log10(age * 1e9), # Accepts log age (GYR)
+        m_h
+    )
+    
+    interpolated = {
+        'teff': 10 ** teff,
+        'logg': logg,
+        'logl': logl
+    }
+
+    return interpolated
+
 def load_neural_network(spectrum):
     global model_name, default_wave_dir, default_model_wave, initial_l, model_components
 
@@ -662,6 +689,8 @@ def create_synthetic_binary_spectrum_at_observed_wavelength(model, spectrum, sam
     # We use the binary model object to extract the parameters of the two components.
     # The model is updated here and in the get_flux_only call for curve fitting.
     
+    model.interpolate()
+
     if 'f_contr' not in model.model_labels:
         raise ValueError('f_contr has to be part of the model_labels')
     else:
@@ -678,12 +707,16 @@ def create_synthetic_binary_spectrum_at_observed_wavelength(model, spectrum, sam
         rv_2 = model.params['rv_2']    
 
 
+
     component_1_labels = model.get_unique_labels()
     component_1_model_parameter = model.get_component_params(1)
 
     component_2_labels = model.get_unique_labels()
     component_2_model_parameter = model.get_component_params(2)
 
+
+    # print(component_1_labels)
+    # print(component_1_model_parameter)
 
 #   TODO Fix this part for new object oriented model
     if same_fe_h:
@@ -748,9 +781,29 @@ def create_synthetic_binary_spectrum_at_observed_wavelength(model, spectrum, sam
     data_model = np.concatenate([spectrum['flux_model_ccd'+str(ccd)] for ccd in spectrum['available_ccds']])
 
     # Repack the model parameters into the array
-    model_parameters = np.concatenate([[f_contr, rv_1], model.get_component_params(1, values_only=True)[1:], [rv_2], model.get_component_params(2, values_only=True)[1:]])
+    # The code updates the parameters individually, they can be modified within the model itself. Manually repack.
+    # model_parameters = np.concatenate([[f_contr, rv_1], model.get_component_params(1, values_only=True, exclude=['rv']), [rv_2], model.get_component_params(2, values_only=True, exclude=['rv'])])
+    # model_parameters = np.concatenate([[f_contr, rv_1], model.get_component_params(1, values_only=True, exclude=['rv']), [rv_2], model.get_component_params(2, values_only=True, exclude=['rv'])])
+
+    model.params['f_contr'] = f_contr
+    model.params['rv_1'] = rv_1
+    model.params['rv_2'] = rv_2
+    model_parameters = model.get_params(values_only=True)
     model.set_params(model_parameters)
 
+
+    # print(100 * np.sum(abs(model - data)) / len(data))
+
+    # print(model.params)
+    # print(model_parameters)
+
+
+    # model_parameters = np.concatenate([[f_contr], component_1_model_parameter, component_2_model_parameter])
+    # model.set_params(model.params)
+
+    # model.set_params({'f_contr': f_contr, 'rv_1': rv_1, 'rv_2': rv_2})
+    # model.set_params(model.get_component_params(1, values_only=False, exclude=['rv']))
+    # model.set_params(model.get_component_params(2, values_only=False, exclude=['rv']))
     return(
         wave, data, sigma2, data_model, model
     )
@@ -782,6 +835,7 @@ def set_iterations(_n):
     iterations = _n
 
 
+
 # %%
 def get_flux_only(wave_init, model, spectrum, same_fe_h, unmasked, *model_parameters, plot=False):
     """
@@ -791,56 +845,26 @@ def get_flux_only(wave_init, model, spectrum, same_fe_h, unmasked, *model_parame
 
     # THIS IS THE CRUCIAL LINE THAT UPDATES THE MODEL PARAMETERS
     model.set_params(model_parameters)
+    # print(model_parameters)
+    # print(tuple(model.get_params(values_only=True)))
 
-    # Override f_contr with the value.
-
-    wave, data, sigma2, model, stellar_model = create_synthetic_binary_spectrum_at_observed_wavelength(model, spectrum, same_fe_h)
+    # print(model.params['rv_1'])
+    # print(model_parameters[4])
 
     global iterations
     
     if plot:
         iterations += 1
-        if iterations % 10 == 0:
-        # Plot the wave_init and model
-            fig, axes = plt.subplots(1, 10, figsize=(30, 5), sharey=True)
+        if iterations % 20 == 0:
+            model.generate_model(spectrum)
+            model.plot(title_text=str(iterations))
 
-            # Iterate over each line and corresponding subplot
-            for i, line in enumerate(important_lines[0:10]):
-                # Define the region to plot: line ± 5 Å
-                line_wvl = line[0]
-                min_wave = line_wvl - 5
-                max_wave = line_wvl + 5
-                
-                # Select data within the specified wavelength range
-                mask = (wave >= min_wave) & (wave <= max_wave)
-                
-                # Plot data and model in the corresponding subplot
-                axes[i].plot(wave[mask], data[mask], label='Observed Data')
-                axes[i].plot(wave[mask], model[mask], label='Model Fit', linestyle='--')
+    # Override f_contr with the value.
 
-                difference = abs(model[mask] - data[mask])
-                axes[i].plot(wave[mask], difference, label='Model Delta', linestyle='--')
-                axes[i].fill_between(wave[mask], 0, difference, color='gray', alpha=0.3)
+    wave, data, sigma2, model_flux, model = create_synthetic_binary_spectrum_at_observed_wavelength(model, spectrum, same_fe_h)
 
-                
-                # Set subplot title and labels
-                axes[i].set_title(f'{line[1]} ({line[0]} Å)')
-                axes[i].set_xlabel('Wavelength')
-                if i == 0:
-                    axes[i].set_ylabel('Flux')
-                
-                # Add legend
-                # axes[i].legend()
 
-            # Adjust layout to prevent overlap
-            model_agreement_percentage = 100 * np.sum(abs(model - data)) / len(data)
-            plt.suptitle(model_agreement_percentage)
-            plt.tight_layout()
-            plt.show()
-        # else:
-        #     print(100 * np.sum(abs(model - data)) / len(data))
-
-    return(model[unmasked])
+    return(model_flux[unmasked])
 
 # %%
 def load_dr3_lines(mode_dr3_path = 'galah_dr4_important_lines'):

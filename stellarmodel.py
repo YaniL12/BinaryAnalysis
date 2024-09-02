@@ -4,9 +4,10 @@ import AnalysisFunctions as af
 important_lines, important_molecules = af.load_dr3_lines()
 
 class StellarModel:
+    interpolator = None
 
     # Constructor with default labels and components. Override for custom labels and components
-    def __init__(self, labels = ['rv', 'teff', 'logg', 'fe_h', 'vmic', 'vsini'], components = 2, same_fe_h=False):
+    def __init__(self, labels = ['rv', 'teff', 'logg', 'fe_h', 'vmic', 'vsini'], components = 2, same_fe_h=False, interpolator=None, interpolate_flux=False):
 
     # Dictionaries for labels, bounds, and initial values
     # These should be instance level variables not class level. Otherwise they will be shared between all instances.
@@ -20,6 +21,9 @@ class StellarModel:
         self.wavelengths = []
         self.flux = []
         self.model_flux = []
+
+        # Should we use a simple flux model or determine flux ratios from interpolated luminosity?
+        self.interpolate_flux = interpolate_flux
 
         # self.unique_labels.append('f_contr')
         self.unique_labels.extend(labels)
@@ -41,6 +45,60 @@ class StellarModel:
             self.params[label] = 0
             self.indices[label] = i
 
+        if interpolator is not None:
+            self.interpolator = interpolator
+
+            if all(label in self.unique_labels for label in ['mass', 'age', 'metallicity']):
+                self.add_param('teff', 0)
+                self.add_param('logg', 0)
+                self.add_param('logl', 0)
+
+
+
+    def interpolate(self):
+        if self.interpolator is not None:
+            # Accepts mass, log(age), metallicity.
+            # Outputs Teff, logg, and log(L) bolometric (flux)
+
+            if all(label in self.unique_labels for label in ['mass', 'age', 'metallicity']):
+                # Both components will have the same starting values.
+                # Provide the log of the age in Gyr for interpolation
+                # TODO Change this to be dynamic based on the number of components
+
+                # Star 1
+                interpolate_1 = self.interpolator(self.params['mass_1'], np.log10(self.params['age_1'] * 1e9), self.params['metallicity_1'])
+                # Star 2
+                interpolate_2 = self.interpolator(self.params['mass_2'], np.log10(self.params['age_2'] * 1e9), self.params['metallicity_2'])
+
+                # self.set_param('teff', (10 ** interpolate[0]) / 1000)
+                # self.set_param('logg', interpolate[1])
+                # self.set_param('logl', interpolate[2])
+
+                self.params['teff_1'] = (10 ** interpolate_1[0]) / 1000
+                self.params['logg_1'] = interpolate_1[1]
+                self.params['logl_1'] = interpolate_1[2]
+
+                self.params['teff_2'] = (10 ** interpolate_2[0]) / 1000
+                self.params['logg_2'] = interpolate_2[1]
+                self.params['logl_2'] = interpolate_2[2]
+
+                if self.interpolate_flux:
+                    f_1 = 10 ** self.params['logl_1']
+                    f_2 = 10 ** self.params['logl_2']
+                    flux_ratio = f_1 / (f_1 + f_2)
+                    self.params['f_contr'] = flux_ratio
+
+            else:
+                print("Isochrone labels not found in model labels. Please add 'mass', 'age', and 'metallicity' to model labels for interpolation")
+
+    # For single parameter retrieval (E.g. teff_1 not teff)
+    def get_param(self, param):
+        if param[:-2] in ['teff', 'logg', 'logg'] and self.interpolator is not None:
+            # We are trying to get a value we need to interpolate for.
+            self.interpolate()
+            return self.params[param]
+        else:
+            return self.params[param]
 
     def get_labels(self):
         return [label for label in self.model_labels.values()]
@@ -51,8 +109,11 @@ class StellarModel:
     def get_component_labels(self, component):
         return [label for label in self.model_labels.values() if label.split('_')[-1] == str(component)]
 
-    def get_params(self):
-        return np.array([float(param) for param in self.params.values()])
+    def get_params(self, values_only=False):
+        if values_only:
+            return np.array([float(param) for param in self.params.values()])
+        else:
+            return self.params
     
     # Sets a parameter for all components at once. E.g. set rv bounds for rv_1 and rv_2 simultaneously
     def set_bounds(self, param, bounds=(-np.inf, np.inf)):
@@ -62,17 +123,21 @@ class StellarModel:
 
     
     # Returns initial parameters as a dictionary without suffixes for each component. E.g. fe_h_1 = 1 -> fe_h = 1
-    def get_component_params(self, component, values_only=False):
+    def get_component_params(self, component, values_only=False, exclude=[]):
         params = []
         for label in self.get_component_labels(component):
-            params.append(float(self.params[label]))
+            if label[:-2] not in exclude:
+                params.append(float(self.params[label]))
 
         if values_only:
             return params
         else:
             params_dict = {}
-            for i, label in enumerate(self.get_unique_labels()):
-                params_dict[label] = params[i]
+            i = 0
+            for label in self.get_unique_labels():
+                if label not in exclude:
+                    params_dict[label] = params[i]
+                    i += 1
 
             return params_dict
     
@@ -90,13 +155,17 @@ class StellarModel:
 
 
     # Returns bounds as an array formatted for curve_fit
-    def get_bounds(self):
-        # Get first bound from each item in dictionary
-        bounds_lower = [float(bound[0]) for bound in self.bounds.values()]
-        bounds_upper = [float(bound[1]) for bound in self.bounds.values()]
+    def get_bounds(self, type='list'):
+        if type == 'list':
+            # Get first bound from each item in dictionary
+            bounds_lower = [float(bound[0]) for bound in self.bounds.values()]
+            bounds_upper = [float(bound[1]) for bound in self.bounds.values()]
 
-        # Return as tuple instead of list of lists.
-        return [tuple(bounds_lower), tuple(bounds_upper)]
+            # Return as tuple instead of list of lists.
+            return [tuple(bounds_lower), tuple(bounds_upper)]
+        else:
+            bounds = [(float(bound[0]), float(bound[1])) for bound in self.bounds.values()]
+            return bounds
     
     # Sets a parameter for all components at once. E.g. set rv paramater value for rv_1 and rv_2 simultaneously
     def set_param(self, param, value):
@@ -107,20 +176,36 @@ class StellarModel:
     # Sets all parameters of the model at once
     # Would be better to pass a dictionary of parameters instead of a list TODO
     def set_params(self, params):
-        for i, label in enumerate(self.model_labels):
-            self.params[label] = params[i]
+        if type(params) is dict:
+            for key, value in params.items():
+                self.params[key] = value
+        else:
+            # This is an array of values.
+            for i, label in enumerate(self.model_labels):
+                self.params[label] = params[i]
+
+    def add_param(self, param, value):
+        self.unique_labels.append(param)
+        for i in range(self.components):
+            self.model_labels[param + '_' + str(i+1)] = param + '_' + str(i+1)
+            self.params[param + '_' + str(i+1)] = value
+            self.bounds[param + '_' + str(i+1)] = (-np.inf, np.inf)
 
     def generate_model(self, spectrum):
         self.wavelengths, self.flux, sigma2_iter1, self.model_flux, unmasked_iter1 = af.return_wave_data_sigma_model(self, spectrum, same_fe_h = False) 
         
 
-    def plot(self):
+    def plot(self, title_text=""):
         global important_lines
         
+        # Initialize lists to hold legend handles and labels
+        handles, labels = [], []
+
+        no_plots = 10
         if self.wavelengths.size > 0 and self.flux.size > 0 and self.model_flux.size > 0:
-            fig, axes = plt.subplots(1, 10, figsize=(30, 5), sharey=True)
+            fig, axes = plt.subplots(1, no_plots, figsize=(30, 5), sharey=True)
             # Iterate over each line and corresponding subplot
-            for i, line in enumerate(important_lines[0:10]):
+            for i, line in enumerate(important_lines[0:no_plots]):
                 # Define the region to plot: line ± 5 Å
                 line_wvl = line[0]
                 min_wave = line_wvl - 5
@@ -130,11 +215,11 @@ class StellarModel:
                 mask = (self.wavelengths >= min_wave) & (self.wavelengths <= max_wave)
                 
                 # Plot data and model in the corresponding subplot
-                axes[i].plot(self.wavelengths[mask], self.flux[mask], label='Observed Data')
-                axes[i].plot(self.wavelengths[mask], self.model_flux[mask], label='Model Fit', linestyle='--')
+                h1, = axes[i].plot(self.wavelengths[mask], self.flux[mask], label='Observed Data')
+                h2, = axes[i].plot(self.wavelengths[mask], self.model_flux[mask], label='Model Fit', linestyle='--')
 
                 difference = abs(self.model_flux[mask] - self.flux[mask])
-                axes[i].plot(self.wavelengths[mask], difference, label='Model Delta', linestyle='--')
+                h3, = axes[i].plot(self.wavelengths[mask], difference, label='Model Delta', linestyle='--')
                 axes[i].fill_between(self.wavelengths[mask], 0, difference, color='gray', alpha=0.3)
                 
                 # Set subplot title and labels
@@ -142,11 +227,24 @@ class StellarModel:
                 axes[i].set_xlabel('Wavelength')
                 if i == 0:
                     axes[i].set_ylabel('Flux')
-                
+                    handles.extend([h1, h2, h3])
+                    labels.extend(['Observed Data', 'Model Fit', 'Model Delta'])
+
+                axes[i].set_ylim(-0.1, 1.2)
 
             # Adjust layout to prevent overlap
             model_agreement_percentage = 100 * np.sum(abs(self.model_flux - self.flux)) / len(self.flux)
-            plt.suptitle(model_agreement_percentage)
+            if self.interpolator is not None:
+                title = str(model_agreement_percentage) + str (" teff: ") + str(self.params["teff_1"]) + str(" logg: ") + str(self.params["logg_1"]) + str(" f_contr: ") + str(self.params["f_contr"])
+            else:
+                title = str(model_agreement_percentage)
+            
+            title = title + " " + title_text
+            plt.suptitle(title)
+            # One legend for all plots, positioned in the center underneath
+            # axes[0].legend(loc='upper center', bbox_to_anchor=(0.5, -0.05), ncol=no_plots)
+            fig.legend(handles=handles, labels=labels, loc='upper center', bbox_to_anchor=(0.5, -0.05), ncol=no_plots)
+
             plt.tight_layout()
             plt.show()
         else:

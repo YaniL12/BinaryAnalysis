@@ -1,3 +1,5 @@
+# Converts FITS files to Pandas DataFrames
+
 
 from astropy.io import fits
 import pandas as pd
@@ -62,3 +64,14 @@ def PlotSpectra(data_or_wavelengths, flux=None, wr=None):
     plt.xlabel('Wavelength (A)')
     plt.ylabel('Flux')
     plt.show()
+
+
+# To plot data from multiple CCDs, ignoring the gaps between them.
+def split_data_by_gaps(wavelengths, flux, gap_threshold=5):
+    # Find the indices where the difference between consecutive wavelengths exceeds the gap_threshold
+    gaps = np.where(np.diff(wavelengths) > gap_threshold)[0]
+    
+    # Split the data at the gaps
+    split_indices = np.split(np.arange(len(wavelengths)), gaps + 1)
+    
+    return [(wavelengths[indices], flux[indices]) for indices in split_indices]
