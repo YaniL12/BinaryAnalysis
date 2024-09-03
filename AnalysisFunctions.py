@@ -710,6 +710,8 @@ def create_synthetic_binary_spectrum_at_observed_wavelength(model, spectrum, sam
     else:
         rv_2 = model.params['rv_2']    
 
+    # Manaully enforce bounds. Useful if we change optimisation algorithms, e.g. Nelder-Mead
+    
     # for param, bounds in zip( model.get_params(),model.get_bounds(type='tuple')):
     #     if model.params[param] < bounds[0] or model.params[param] > bounds[1]:
     #         model.params[param] = np.clip(model.params[param], bounds[0], bounds[1])
@@ -848,7 +850,7 @@ def get_flux_only(wave_init, model, spectrum, same_fe_h, unmasked, *model_parame
     """
     This will be used as interpolation routine to give back a synthetic flux based on the curve_fit parameters
     """
-    
+
     # THIS IS CRUCIAL -> UPDATES THE MODEL PARAMETERS
     model.set_params(model_parameters)
 
