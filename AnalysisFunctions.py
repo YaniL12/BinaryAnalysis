@@ -665,6 +665,7 @@ def cubic_spline_interpolate(old_wavelength, old_flux, new_wavelength):
     OUTPUT:
     flux interpolated on new_wavelength array
     """
+
     return scipy.interpolate.CubicSpline(old_wavelength, old_flux)(new_wavelength)
 
 # %%
@@ -690,6 +691,9 @@ def create_synthetic_binary_spectrum_at_observed_wavelength(model, spectrum, sam
     # The model is updated here and in the get_flux_only call for curve fitting.
     
     model.interpolate()
+    
+    # Save parameter history
+    model.save_data()
 
     if 'f_contr' not in model.model_labels:
         raise ValueError('f_contr has to be part of the model_labels')
@@ -706,6 +710,9 @@ def create_synthetic_binary_spectrum_at_observed_wavelength(model, spectrum, sam
     else:
         rv_2 = model.params['rv_2']    
 
+    # for param, bounds in zip( model.get_params(),model.get_bounds(type='tuple')):
+    #     if model.params[param] < bounds[0] or model.params[param] > bounds[1]:
+    #         model.params[param] = np.clip(model.params[param], bounds[0], bounds[1])
 
 
     component_1_labels = model.get_unique_labels()
@@ -841,15 +848,9 @@ def get_flux_only(wave_init, model, spectrum, same_fe_h, unmasked, *model_parame
     """
     This will be used as interpolation routine to give back a synthetic flux based on the curve_fit parameters
     """
-    # Call to GAIA interpolator for teff_1, logg_1 etc.
-
-    # THIS IS THE CRUCIAL LINE THAT UPDATES THE MODEL PARAMETERS
+    
+    # THIS IS CRUCIAL -> UPDATES THE MODEL PARAMETERS
     model.set_params(model_parameters)
-    # print(model_parameters)
-    # print(tuple(model.get_params(values_only=True)))
-
-    # print(model.params['rv_1'])
-    # print(model_parameters[4])
 
     global iterations
     
@@ -862,7 +863,6 @@ def get_flux_only(wave_init, model, spectrum, same_fe_h, unmasked, *model_parame
     # Override f_contr with the value.
 
     wave, data, sigma2, model_flux, model = create_synthetic_binary_spectrum_at_observed_wavelength(model, spectrum, same_fe_h)
-
 
     return(model_flux[unmasked])
 

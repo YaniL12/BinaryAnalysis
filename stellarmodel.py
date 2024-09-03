@@ -22,6 +22,8 @@ class StellarModel:
         self.flux = []
         self.model_flux = []
 
+        self.param_data = {}
+
         # Should we use a simple flux model or determine flux ratios from interpolated luminosity?
         self.interpolate_flux = interpolate_flux
 
@@ -52,8 +54,16 @@ class StellarModel:
                 self.add_param('teff', 0)
                 self.add_param('logg', 0)
                 self.add_param('logl', 0)
+        
+        self.param_data = {key: [] for key in self.params.keys()}
+        self.param_data['residual'] = []
 
+    def save_data(self):
+        for i, param in enumerate(self.params):
+            self.param_data[param].append(self.params[param])
 
+        r = 100 * np.sum(abs(np.array(self.model_flux) - np.array(self.flux))) / len(self.flux)
+        self.param_data['residual'].append(r)
 
     def interpolate(self):
         if self.interpolator is not None:
@@ -194,6 +204,8 @@ class StellarModel:
     def generate_model(self, spectrum):
         self.wavelengths, self.flux, sigma2_iter1, self.model_flux, unmasked_iter1 = af.return_wave_data_sigma_model(self, spectrum, same_fe_h = False) 
         
+    def get_residual(self):
+        return 100 * np.sum(abs(self.model_flux - self.flux)) / len(self.flux)
 
     def plot(self, title_text=""):
         global important_lines
