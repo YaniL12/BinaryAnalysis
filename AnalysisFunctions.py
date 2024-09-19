@@ -36,7 +36,7 @@ galah_dr4_directory = '/avatar/buder/GALAH_DR4/'
 def load_isochrones():
     global isochrone_interpolator
 
-    print(working_directory)
+    # print(working_directory)
     if os.path.exists(working_directory + '/assets/parsec_interpolator.pkl'):
         with open(working_directory + '/assets/parsec_interpolator.pkl', 'rb') as f:
             isochrone_interpolator = pickle.load(f)
@@ -160,11 +160,17 @@ def read_spectrum(sobject_id, tmass_id, neglect_ir_beginning=True):
 
     dir = galah_dr4_directory + 'observations/' + str(sobject_id)[:6] + '/spectra/com/' + str(sobject_id) + '1.fits'
     try:
-        fits_file = fits.open(dir)
-        print("Succsefully found file for object " + dir)
+        if os.path.exists(dir):
+            fits_file = fits.open(dir)
+            print("Succsefully found file for object " + dir)
+        else:
+            print("No file found for spectra", dir)
+            return False
+            exit()
     except:
         print("No file found for spectra", dir)
         end_processing('missing_file')
+        return False
         exit()
     
 
@@ -228,7 +234,7 @@ def read_spectrum(sobject_id, tmass_id, neglect_ir_beginning=True):
             
             if np.shape(spectrum['lsf_ccd'+str(ccd)])[0] == 1:
                 
-                lsf_info = Table.read('../observations/galah_dr4_lsf_info_231004.fits')
+                lsf_info = Table.read(working_directory + 'assets/galah_dr4_lsf_info_231004.fits')
 
                 # find all spectra are
                 # a) observed with same FIBRE (*pivot*) and
@@ -576,6 +582,13 @@ def calculate_default_degrading_wavelength_grid(default_model_wave, spectrum, sy
 def galah_kern(fwhm, b):
     """ Returns a normalized 1D kernel as is used for GALAH resolution profile """
     size=2*(fwhm/2.355)**2
+
+    # # # Check if 'size' is masked
+    # if np.ma.is_masked(size):
+    #     size = np.ma.filled(size, fill_value=0)  # or some other default value
+    #     # Replace nans with 0
+    #     size = np.nan_to_num(size)
+
     size_grid = int(size) # we limit the size of kernel, so it is as small as possible (or minimal size) for faster calculations
     if size_grid<7: size_grid=7
     x= scipy.mgrid[-size_grid:size_grid+1]
@@ -607,6 +620,8 @@ def synth_resolution_degradation(l, res_map, res_b, synth, initial_l, synth_res=
     #current sampling:
     sampl=synth[:,0][1]-synth[:,0][0]
     galah_sampl=l[1]-l[0]
+
+    # print("sampl", l[1], l[0])
 
     #original sigma
     s_original=sigma_synth
@@ -665,7 +680,9 @@ def cubic_spline_interpolate(old_wavelength, old_flux, new_wavelength):
     OUTPUT:
     flux interpolated on new_wavelength array
     """
-
+    # print("old_wavelength", old_wavelength)
+    # print("old_flux", old_flux)
+    # print("new_wavelength", new_wavelength)
     return scipy.interpolate.CubicSpline(old_wavelength, old_flux)(new_wavelength)
 
 # %%
@@ -693,7 +710,7 @@ def create_synthetic_binary_spectrum_at_observed_wavelength(model, spectrum, sam
     model.interpolate()
     
     # Save parameter history
-    model.save_data()
+    # model.save_data()
 
     if 'f_contr' not in model.model_labels:
         raise ValueError('f_contr has to be part of the model_labels')
@@ -737,15 +754,21 @@ def create_synthetic_binary_spectrum_at_observed_wavelength(model, spectrum, sam
 
 
     # This returns synthetic spectra for each component created by the neural network
+    # print(model.id ,component_1_model_parameter)
     component_1_model = create_synthetic_spectrum(component_1_model_parameter, component_1_labels)
     component_2_model = create_synthetic_spectrum(component_2_model_parameter, component_2_labels)
     
     for ccd in spectrum['available_ccds']:
         
         wave_model_ccd = (default_model_wave > (3+ccd)*1000) & (default_model_wave < (4+ccd)*1000)
-        
+    
+        # print("model wave", default_model_wave)
+        # print("synth", default_model_wave[wave_model_ccd])
+        # print("synth 2", component_1_model[wave_model_ccd])
+                                           
+
         wave_model_1_ccd_lsf, component_1_model_ccd_lsf = synth_resolution_degradation(
-                l = rv_shift(rv_1,spectrum['wave_ccd'+str(ccd)]), 
+                l = rv_shift(rv_1, spectrum['wave_ccd'+str(ccd)]), 
                 res_map = spectrum['lsf_ccd'+str(ccd)], 
                 res_b = spectrum['lsf_b_ccd'+str(ccd)], 
                 synth = np.array([default_model_wave[wave_model_ccd], component_1_model[wave_model_ccd]]).T,
@@ -753,6 +776,7 @@ def create_synthetic_binary_spectrum_at_observed_wavelength(model, spectrum, sam
                 synth_res=300000.0,
                 reuse_initial_res_wave_grid = True
             )
+        
     
         wave_model_2_ccd_lsf, component_2_model_ccd_lsf = synth_resolution_degradation(
                 l = rv_shift(rv_2,spectrum['wave_ccd'+str(ccd)]), 
@@ -858,9 +882,10 @@ def get_flux_only(wave_init, model, spectrum, same_fe_h, unmasked, *model_parame
     
     if plot:
         iterations += 1
-        if iterations % 20 == 0:
+        if iterations % 50 == 0:
             model.generate_model(spectrum)
             model.plot(title_text=str(iterations))
+            print(iterations, model.params)
 
     # Override f_contr with the value.
 

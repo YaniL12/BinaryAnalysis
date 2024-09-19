@@ -7,10 +7,11 @@ class StellarModel:
     interpolator = None
 
     # Constructor with default labels and components. Override for custom labels and components
-    def __init__(self, labels = ['rv', 'teff', 'logg', 'fe_h', 'vmic', 'vsini'], components = 2, same_fe_h=False, interpolator=None, interpolate_flux=False):
+    def __init__(self, id="No ID", labels = ['rv', 'teff', 'logg', 'fe_h', 'vmic', 'vsini'], components = 2, same_fe_h=False, interpolator=None, interpolate_flux=False):
 
     # Dictionaries for labels, bounds, and initial values
     # These should be instance level variables not class level. Otherwise they will be shared between all instances.
+        self.id = id
         self.components = components
         self.model_labels = {}
         self.unique_labels = []
@@ -91,6 +92,18 @@ class StellarModel:
                 self.params['teff_2'] = (10 ** interpolate_2[0]) / 1000
                 self.params['logg_2'] = interpolate_2[1]
                 self.params['logl_2'] = interpolate_2[2]
+
+                # The optimiser has gone outside the bounds. Set parmaeters to unreasonable values. This should results in a high residual.
+                # Consider scaling parameters to prevent this in the optimiser (TODO)
+                if np.isnan(self.params['teff_1']) or np.isnan(self.params['teff_2']):
+                    # print("Interpolated values are NaN. Check input values for interpolation")
+                    self.params['teff_1'] = 0
+                    self.params['teff_2'] = 0
+                    self.params['logg_1'] = 0
+                    self.params['logg_2'] = 0
+                    self.params['logl_1'] = 0
+                    self.params['logl_2'] = 0
+                    # self.params['f_contr'] = 0.5
 
                 if self.interpolate_flux:
                     f_1 = 10 ** self.params['logl_1']
@@ -199,7 +212,7 @@ class StellarModel:
         for i in range(self.components):
             self.model_labels[param + '_' + str(i+1)] = param + '_' + str(i+1)
             self.params[param + '_' + str(i+1)] = value
-            self.bounds[param + '_' + str(i+1)] = (-np.inf, np.inf)
+            self.bounds[param + '_' + str(i+1)] = (-1e10, 1e10)
 
     def generate_model(self, spectrum):
         self.wavelengths, self.flux, sigma2_iter1, self.model_flux, unmasked_iter1 = af.return_wave_data_sigma_model(self, spectrum, same_fe_h = False) 
@@ -246,8 +259,16 @@ class StellarModel:
 
             # Adjust layout to prevent overlap
             model_agreement_percentage = 100 * np.sum(abs(self.model_flux - self.flux)) / len(self.flux)
+            # residual = np.sum(residuals**2) / (len(residuals) - len(model_parameters))
+
+            model_agreement_percentage = model_agreement_percentage ** 2
+            
             if self.interpolator is not None:
-                title = str(model_agreement_percentage) + str (" teff: ") + str(self.params["teff_1"]) + str(" logg: ") + str(self.params["logg_1"]) + str(" f_contr: ") + str(self.params["f_contr"])
+                title = str(model_agreement_percentage) + \
+                    "ID: " + str(self.id) + \
+                    " teff: " + str(round(self.params["teff_1"], 3)) + " / " + str(round(self.params["teff_2"], 3)) + \
+                    " logg: " + str(round(self.params["logg_1"], 3)) + " / " + str(round(self.params["logg_2"], 3)) + \
+                    " f_contr: " + str(round(self.params["f_contr"], 4))
             else:
                 title = str(model_agreement_percentage)
             
