@@ -219,6 +219,9 @@ class StellarModel:
         
     def get_residual(self):
         return 100 * np.sum(abs(self.model_flux - self.flux)) / len(self.flux)
+    
+    def get_rchi2(self):
+        return np.sum((self.model_flux - self.flux) ** 2) / (len(self.flux) - len(self.params))
 
     def plot(self, title_text=""):
         global important_lines
@@ -262,13 +265,15 @@ class StellarModel:
             # residual = np.sum(residuals**2) / (len(residuals) - len(model_parameters))
 
             model_agreement_percentage = model_agreement_percentage ** 2
+            model_rchi = self.get_rchi2()
             
             if self.interpolator is not None:
                 title = str(model_agreement_percentage) + \
                     "ID: " + str(self.id) + \
-                    " teff: " + str(round(self.params["teff_1"], 3)) + " / " + str(round(self.params["teff_2"], 3)) + \
-                    " logg: " + str(round(self.params["logg_1"], 3)) + " / " + str(round(self.params["logg_2"], 3)) + \
-                    " f_contr: " + str(round(self.params["f_contr"], 4))
+                    " rchi2: " + str(model_rchi)
+                    # " teff: " + str(round(self.params["teff_1"], 3)) + " / " + str(round(self.params["teff_2"], 3)) + \
+                    # " logg: " + str(round(self.params["logg_1"], 3)) + " / " + str(round(self.params["logg_2"], 3)) + \
+                    # " f_contr: " + str(round(self.params["f_contr"], 4))
             else:
                 title = str(model_agreement_percentage)
             

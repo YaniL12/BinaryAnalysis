@@ -35,6 +35,7 @@ galah_dr4_directory = '/avatar/buder/GALAH_DR4/'
 
 def load_isochrones():
     global isochrone_interpolator
+    working_directory = '/avatar/yanilach/PhD-Home/binaries_galah-main/spectrum_analysis/BinaryAnalysis/'
 
     # print(working_directory)
     if os.path.exists(working_directory + '/assets/parsec_interpolator.pkl'):
@@ -44,7 +45,9 @@ def load_isochrones():
 
     else:
         print("No isochrone interpolator found. Creating interpolator - this could take a while (20-40m).")
-        isochrone_table = Table.read('BinaryAnalysis/assets/parsec_isochrones_logt_8p00_0p01_10p17_mh_m2p75_0p25_m0p75_mh_m0p60_0p10_0p70_GaiaEDR3_2MASS.fits')
+        # print(working_directory)
+        # isochrone_table = Table.read(working_directory + 'assets/parsec_isochrones_logt_8p00_0p01_10p17_mh_m2p75_0p25_m0p75_mh_m0p60_0p10_0p70_GaiaEDR3_2MASS.fits')
+        isochrone_table = Table.read('/avatar/yanilach/PhD-Home/binaries_galah-main/spectrum_analysis/BinaryAnalysis/assets/parsec_isochrones_logt_8p00_0p01_10p17_mh_m2p75_0p25_m0p75_mh_m0p60_0p10_0p70_GaiaEDR3_2MASS.fits')
 
         parsec_points = np.array([isochrone_table['mass'], isochrone_table['logAge'], isochrone_table['m_h']]).T
         parsec_values_lite = np.array([isochrone_table['logT'], isochrone_table['logg'], isochrone_table['logL']]).T
@@ -56,7 +59,7 @@ def load_isochrones():
 
         print("Isochrone interpolator created. Saving to file.")
 
-        with open('/assets/parsec_interpolator.pkl', 'wb') as f:
+        with open(working_directory + 'assets/parsec_interpolator.pkl', 'wb') as f:
             pickle.dump(isochrone_interpolator, f)
 
         with open('/assets/parsec_interpolator.pkl', 'rb') as f:
