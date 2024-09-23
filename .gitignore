@@ -1,0 +1,9 @@
+*.fits
+*.pkl
+/__pycache__
+*.pyc
+AnalysisTracker.json
+AnalysisTracker.txt
+ResultsExplorer.ipynb
+test_connect.php
+young_binaries.csv
