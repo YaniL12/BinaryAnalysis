@@ -198,7 +198,8 @@ def fit_model(sobject_id):
 
     model.params['rv_1'] = single_results['rv_gauss'][0]
     model.params['rv_2'] = single_results['rv_peak_2'][0]
-    if np.isnan(model.params['rv_2']):
+    if np.isnan(model.params['rv_2']) or str(model.params['rv_2']) == "--":
+        print("No RV2 value!")
         return
 
     min_rv = min(model.params['rv_1'], model.params['rv_2']) - 100
@@ -207,6 +208,10 @@ def fit_model(sobject_id):
 
     model.set_param('teff', single_results['teff'][0]/1000.)
     model.set_param('logg', single_results['logg'][0])
+
+    model.set_param('age', float(sys.argv[3]))
+    model.set_param('mass', float(sys.argv[4]))
+    model.set_param('metallicity', float(sys.argv[5])) # Approximate m_h as fe_h
 
     model.set_bounds('age', (age_min, age_max))
     model.set_bounds('mass', (isochrone_table['mass'].min(), isochrone_table['mass'].max()))
@@ -219,6 +224,7 @@ def fit_model(sobject_id):
     af.load_neural_network(spectrum)
     af.set_iterations(0)
     af.load_dr3_lines()
+    
 
     wave_init, data_init, sigma2_init, model_init, unmasked_init = af.return_wave_data_sigma_model(model, spectrum, same_fe_h)
     unmasked = unmasked_init
@@ -302,7 +308,7 @@ def fit_model(sobject_id):
 
     params = model.get_params(values_only=True)
     params_list = ', '.join(map(str, params))
-    print(model.get_residual(), params_list)
+    print(model.get_residual(), model.get_rchi2(), params_list)
 
 
 fit_model(sobject_id)

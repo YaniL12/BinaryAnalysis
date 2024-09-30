@@ -81,9 +81,12 @@ def update_tracker(object_ids, val=0, err=None):
         # Update the value and add the timestamp. Overides existing data.
         if val == 0:
             data['objects'][str(s_id)] = {
-                'status': val,
-                'timestart': current_time
+                'status': val
             }
+        elif val == 1:
+            # Assume the entry already exists
+            data['objects'][str(s_id)]['status'] = val
+            data['objects'][str(s_id)]['timestart'] = current_time
         else:
             # Update existing entry with new timestop
             # Assume the entry already exists
@@ -143,14 +146,20 @@ def run_script(args):
         # Split the output by lines and get the last line
         output_lines = result.stdout.splitlines()
         # Just get the residual and parameters
+
         final_line = output_lines[-1] if output_lines else "No output received"
         print("Final Output:", final_line)
-        
-        update_tracker([object_id], 2)
 
-        with file_lock:
-            with open("fit_results.txt", "a") as f:
-                f.write(f"{object_id}, {final_line}\n")
+        #Check if final line contains the word' RV2.
+        # TODO make this more robust
+        if 'RV2' not in final_line:
+            update_tracker([object_id], 2)
+
+            with file_lock:
+                with open("fit_results.txt", "a") as f:
+                    f.write(f"{object_id}, {final_line}\n")
+        else:
+            update_tracker([object_id], -1, err=final_line)
 
 
     except subprocess.CalledProcessError as e:
@@ -190,8 +199,13 @@ if __name__ == "__main__":
 
     # Get all stars in GALAH DR4 where the sobject_id is in obvious_binaries array
     obvious_binaries = pd.read_csv(working_directory + "obvious_binaries.csv")
-    binary_stars = GALAH_DR4[GALAH_DR4['sobject_id'].isin(obvious_binaries['0'].values)]
+
     # Check the star has a valid rv_2 value
+    binary_stars = GALAH_DR4[GALAH_DR4['sobject_id'].isin(obvious_binaries['0'].values)]
+
+    # Get the row where the object ID is 131216001101026
+    # TESTING
+    # binary_stars = GALAH_DR4[GALAH_DR4['sobject_id'] == 131216001101026]
 
     object_ids = binary_stars['sobject_id'].values
     tmass_ids = binary_stars['tmass_id'].values
@@ -209,6 +223,20 @@ if __name__ == "__main__":
     
     current_time = datetime.now().isoformat()  # e.g., '2024-09-11T14:23:45.123456'
 
+    # Move the current tracker to a backup file in a sudirectory and delete the current tracker
+    # Check if a tracker file already exists
+    if os.path.exists(tracker_path + "AnalysisTracker.json"):
+        backup_path = tracker_path + "runs/"
+        Path(backup_path).mkdir(parents=True, exist_ok=True)
+        os.rename(tracker_path + "AnalysisTracker.json", backup_path + "AnalysisTracker_" + current_time + ".json")
+
+    if os.path.exists("fit_results.txt"):
+        backup_path = "previous_fit_results/"
+        Path(backup_path).mkdir(parents=True, exist_ok=True)
+        os.rename("fit_results.txt", backup_path + "fit_results " + current_time + ".txt")
+
+
+
     val = {
         'timestart': current_time,
         'no_objects': len(object_ids),
@@ -221,15 +249,6 @@ if __name__ == "__main__":
 
     # # Create a pool of worker processes. Max number here is 24 at home.
     num_cores_os = 30
-    # num_cores_os = multiprocessing.cpu_count() - 2
-    # pool = Pool(processes=num_cores_os)
-
-    # # Run the scripts in parallel
-    # pool.map(run_script, zip(object_ids, tmass_ids, ages, masses, m_hs))
-
-    # # Close the pool of worker processes
-    # pool.close()
-    # pool.join()
 
     with Pool(processes=num_cores_os) as pool:
         # Run the scripts in parallel

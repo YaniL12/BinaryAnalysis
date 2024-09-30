@@ -137,7 +137,7 @@ def end_processing(msg):
     exit()
 
 
-def read_spectrum(sobject_id, tmass_id, neglect_ir_beginning=True):
+def read_spectrum(sobject_id, tmass_id=None, neglect_ir_beginning=True):
     """
     This reads in raw spectra from the GALAH DR4 dataset. Outputs the range of wavelengths with valid CCD data. Does NOT output the observed fluxes.
     Observed and model fluxes are determined during model fitting, as they are dependent on the model for normalisation.
@@ -147,7 +147,9 @@ def read_spectrum(sobject_id, tmass_id, neglect_ir_beginning=True):
     spectrum['sobject_id'] = sobject_id # major identifier
     spectrum['flag_sp'] = int(0) # major quality indicator
         
-    spectrum['tmass_id'] = str(tmass_id)
+    if tmass_id is not None:
+        spectrum['tmass_id'] = str(tmass_id)
+        
     try:
         spectrum['gaiadr3_source_id'] = gaiadr3_source_id
     except:
@@ -165,13 +167,13 @@ def read_spectrum(sobject_id, tmass_id, neglect_ir_beginning=True):
     try:
         if os.path.exists(dir):
             fits_file = fits.open(dir)
-            print("Succsefully found file for object " + dir)
+            # print("Succsefully found file for object " + dir)
         else:
-            print("No file found for spectra", dir)
+            print("No file found for spectra ", dir)
             return False
             exit()
     except:
-        print("No file found for spectra", dir)
+        print("No file found for spectra ", dir)
         end_processing('missing_file')
         return False
         exit()
@@ -339,6 +341,9 @@ def read_spectrum(sobject_id, tmass_id, neglect_ir_beginning=True):
     spectrum['wave'] = np.concatenate(([spectrum['wave_ccd'+str(ccd)] for ccd in spectrum['available_ccds']]))
 
     ###
+    # Load the neural network model here, so the user doesn't need to call it explicitly.
+    if 'model_components' not in globals():
+        load_neural_network(spectrum)
 
     return(spectrum)
 
@@ -824,7 +829,9 @@ def create_synthetic_binary_spectrum_at_observed_wavelength(model, spectrum, sam
     model.params['f_contr'] = f_contr
     model.params['rv_1'] = rv_1
     model.params['rv_2'] = rv_2
-    model_parameters = model.get_params(values_only=True)
+    model_parameters = model.get_params(values_only=False, exclude_fixed=False)
+    # print("Trying to set all parameters with dict")
+    # print(model_parameters)
     model.set_params(model_parameters)
 
 
@@ -878,7 +885,7 @@ def get_flux_only(wave_init, model, spectrum, same_fe_h, unmasked, *model_parame
     This will be used as interpolation routine to give back a synthetic flux based on the curve_fit parameters
     """
 
-    # THIS IS CRUCIAL -> UPDATES THE MODEL PARAMETERS
+    # THIS IS CRUCIAL -> UPDATE THE MODEL PARAMETERS. IDIOT.
     model.set_params(model_parameters)
 
     global iterations
@@ -899,6 +906,7 @@ def get_flux_only(wave_init, model, spectrum, same_fe_h, unmasked, *model_parame
 # %%
 def load_dr3_lines(mode_dr3_path = 'galah_dr4_important_lines'):
     global important_lines, important_molecules
+
     """
     
     """
@@ -925,6 +933,12 @@ def load_dr3_lines(mode_dr3_path = 'galah_dr4_important_lines'):
 
 
 def plot_spectrum(wave,flux,flux_uncertainty,unmasked_region,title_text,comp1_text,comp2_text,neglect_ir_beginning=True):
+
+
+    # If important lines are not loaded, load them
+    if 'important_lines' not in globals() or 'important_molecules' not in globals():
+        load_dr3_lines()
+        
     """
     Let's plot a spectrum, that is, flux over wavelenth
     

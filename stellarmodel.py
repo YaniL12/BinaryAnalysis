@@ -1,13 +1,14 @@
 import numpy as np
 import matplotlib.pyplot as plt
 import AnalysisFunctions as af
+from pandas import DataFrame
 important_lines, important_molecules = af.load_dr3_lines()
 
 class StellarModel:
     interpolator = None
 
     # Constructor with default labels and components. Override for custom labels and components
-    def __init__(self, id="No ID", labels = ['rv', 'teff', 'logg', 'fe_h', 'vmic', 'vsini'], components = 2, same_fe_h=False, interpolator=None, interpolate_flux=False):
+    def __init__(self, id="No ID", labels = ['rv', 'teff', 'logg', 'fe_h', 'vmic', 'vsini'], fixed_labels=[], components = 2, same_fe_h=False, interpolator=None, interpolate_flux=False):
 
     # Dictionaries for labels, bounds, and initial values
     # These should be instance level variables not class level. Otherwise they will be shared between all instances.
@@ -27,6 +28,8 @@ class StellarModel:
 
         # Should we use a simple flux model or determine flux ratios from interpolated luminosity?
         self.interpolate_flux = interpolate_flux
+
+        self.fixed_labels = fixed_labels
 
         # self.unique_labels.append('f_contr')
         self.unique_labels.extend(labels)
@@ -51,7 +54,7 @@ class StellarModel:
         if interpolator is not None:
             self.interpolator = interpolator
 
-            if all(label in self.unique_labels for label in ['mass', 'age', 'metallicity']):
+            if all(label in self.unique_labels for label in ['mass']) and all(label in self.fixed_labels for label in ['age', 'metallicity']):
                 self.add_param('teff', 0)
                 self.add_param('logg', 0)
                 self.add_param('logl', 0)
@@ -66,12 +69,24 @@ class StellarModel:
         r = 100 * np.sum(abs(np.array(self.model_flux) - np.array(self.flux))) / len(self.flux)
         self.param_data['residual'].append(r)
 
+    def load_data(self, data):
+        # Check if data is a DataFrame
+        if type(data) is DataFrame:
+            row = data[data['sobject_id'] == self.id]
+            for col in data.columns:
+                # If col exists in the model.params, set the value
+                if col in self.get_labels():
+                    self.params[col] = row[col].iloc[0]
+
+            spectrum = af.read_spectrum(self.id)
+            self.generate_model(spectrum)
+
     def interpolate(self):
         if self.interpolator is not None:
             # Accepts mass, log(age), metallicity.
             # Outputs Teff, logg, and log(L) bolometric (flux)
 
-            if all(label in self.unique_labels for label in ['mass', 'age', 'metallicity']):
+            if all(label in self.unique_labels for label in ['mass']) and all(label in self.fixed_labels for label in ['age', 'metallicity']):
                 # Both components will have the same starting values.
                 # Provide the log of the age in Gyr for interpolation
                 # TODO Change this to be dynamic based on the number of components
@@ -132,11 +147,20 @@ class StellarModel:
     def get_component_labels(self, component):
         return [label for label in self.model_labels.values() if label.split('_')[-1] == str(component)]
 
-    def get_params(self, values_only=False):
+    def get_params(self, values_only=False, exclude_fixed=False):
+
         if values_only:
-            return np.array([float(param) for param in self.params.values()])
+            if exclude_fixed:
+                mask = [key.split('_')[0] not in self.fixed_labels for key in self.params.keys()]
+                return np.array([float(param) for param in self.params.values()])[mask]
+            else:
+                return np.array([float(param) for param in self.params.values()])
         else:
-            return self.params
+            if exclude_fixed:
+                return {key: value for key, value in self.params.items() if key.split('_')[0] not in self.fixed_labels}
+            else:
+                # params_dict = {x: y for x, y in self.params.items()}
+                return self.params
     
     # Sets a parameter for all components at once. E.g. set rv bounds for rv_1 and rv_2 simultaneously
     def set_bounds(self, param, bounds=(-np.inf, np.inf)):
@@ -164,7 +188,7 @@ class StellarModel:
 
             return params_dict
     
-    # Returns the index of a label in the model_labels dictionary (Enumify)
+    # Returns the index of a label in the model_labels dictionary (Enum-ify)
     def label(self, label, comp=None):
         # E.g. if label = 'rv' and comp = 1, return index of rv_1
         if comp is not None:
@@ -195,24 +219,42 @@ class StellarModel:
         if param in self.unique_labels:
             for i in range(self.components):
                 self.params[param + '_' + str(i+1)] = value
+        # New parameter not in model_labels
+        elif param in self.model_labels:
+            self.params[param] = value
+        else:
+            print("Parameter " + param +  " not found in model labels. If this is a new parameter or fixed parameter, add it using add_param() first.")
 
     # Sets all parameters of the model at once
-    # Would be better to pass a dictionary of parameters instead of a list TODO
     def set_params(self, params):
+        # print("TYPE ", type(params))
+        # print("PARAMS: ", params)
+
         if type(params) is dict:
             for key, value in params.items():
                 self.params[key] = value
         else:
             # This is an array of values.
-            for i, label in enumerate(self.model_labels):
-                self.params[label] = params[i]
+            #  Model labels we are trying to fit
+            fit_labels = [label for label in self.model_labels if label.split('_')[0] not in self.fixed_labels]
+            
+            # print(fit_labels, len(fit_labels))
+            # print(fit_labels, self.model_labels, self.fixed_labels)
+
+            if len(fit_labels) == len(params):
+                for i, label in enumerate(fit_labels):
+                    self.params[label] = params[i]
+            else:
+                raise ValueError("Error: trying to set all parameters at once but the number of parameters does not match the number of labels in the model.")
 
     def add_param(self, param, value):
         self.unique_labels.append(param)
         for i in range(self.components):
             self.model_labels[param + '_' + str(i+1)] = param + '_' + str(i+1)
             self.params[param + '_' + str(i+1)] = value
-            self.bounds[param + '_' + str(i+1)] = (-1e10, 1e10)
+
+            if param not in self.fixed_labels:
+                self.bounds[param + '_' + str(i+1)] = (-1e10, 1e10)
 
     def generate_model(self, spectrum):
         self.wavelengths, self.flux, sigma2_iter1, self.model_flux, unmasked_iter1 = af.return_wave_data_sigma_model(self, spectrum, same_fe_h = False) 
@@ -264,24 +306,46 @@ class StellarModel:
             model_agreement_percentage = 100 * np.sum(abs(self.model_flux - self.flux)) / len(self.flux)
             # residual = np.sum(residuals**2) / (len(residuals) - len(model_parameters))
 
-            model_agreement_percentage = model_agreement_percentage ** 2
+            # model_agreement_percentage = model_agreement_percentage ** 2
             model_rchi = self.get_rchi2()
+            model_rchi = 1e3 * model_rchi
             
             if self.interpolator is not None:
-                title = str(model_agreement_percentage) + \
-                    "ID: " + str(self.id) + \
-                    " rchi2: " + str(model_rchi)
-                    # " teff: " + str(round(self.params["teff_1"], 3)) + " / " + str(round(self.params["teff_2"], 3)) + \
-                    # " logg: " + str(round(self.params["logg_1"], 3)) + " / " + str(round(self.params["logg_2"], 3)) + \
-                    # " f_contr: " + str(round(self.params["f_contr"], 4))
+                title = "ID: " + str(self.id) + \
+                    "   Agreement: " + str(model_agreement_percentage) + "%" \
+                    "   rchi2" + str(model_rchi)
             else:
-                title = str(model_agreement_percentage)
+                title = "ID: " + str(self.id) + \
+                    "   Agreement: " + str(round(model_agreement_percentage, 4)) + "%" \
+                    "   $r\\chi^{2} 10^{3}$: " + str(round(model_rchi, 6))
             
             title = title + " " + title_text
             plt.suptitle(title)
             # One legend for all plots, positioned in the center underneath
             # axes[0].legend(loc='upper center', bbox_to_anchor=(0.5, -0.05), ncol=no_plots)
-            fig.legend(handles=handles, labels=labels, loc='upper center', bbox_to_anchor=(0.5, -0.05), ncol=no_plots)
+            fig.legend(handles=handles, labels=labels, loc='upper center', bbox_to_anchor=(0.5, -0.01), ncol=no_plots)
+
+            # Annotate the figure
+            x_start = 0.4
+            annotation1 = \
+                    "   rv$_1$: " + str(round(self.params["rv_1"], 1)) + \
+                    "   teff$_1$: " + str(round(self.params["teff_1"] * 1e3)) + \
+                    "   logg$_1$: " + str(round(self.params["logg_1"], 3)) + \
+                    "   mass$_1$: " + str(round(self.params["mass_1"], 3)) + \
+                    "   age$_1$: " + str(round(self.params["age_1"], 4)) + \
+                    "   metallicity$_1$: " + str(round(self.params["metallicity_1"], 4))
+            
+            annotation2 = \
+                    "   rv$_2$: " + str(round(self.params["rv_2"], 1)) + \
+                    "   teff$_2$: " + str(round(self.params["teff_2"] * 1e3)) + \
+                    "   logg$_2$: " + str(round(self.params["logg_2"], 3)) + \
+                    "   mass$_2$: " + str(round(self.params["mass_2"], 3)) + \
+                    "   age$_2$: " + str(round(self.params["age_2"], 4)) + \
+                    "   metallicity$_2$: " + str(round(self.params["metallicity_2"], 4))
+
+            fig.text(x_start - 0.12, -0.2, "Flux Ratio: " + str(round(self.params["f_contr"], 4)), ha='center', va='center', fontsize=18)
+            fig.text(x_start + 0.12, -0.15, annotation1, ha='center', va='center', fontsize=18)
+            fig.text(x_start + 0.12, -0.25, annotation2, ha='center', va='center', fontsize=18)
 
             plt.tight_layout()
             plt.show()

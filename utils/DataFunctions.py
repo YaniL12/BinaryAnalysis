@@ -2,6 +2,7 @@ from astropy.io import fits
 import numpy as np
 import pandas as pd
 import os
+import re
 
 def FitsToDF(fn):
     """
@@ -124,3 +125,71 @@ def read_dat_file(dat_file, readme_file="ReadMe"):
         print("Error: The file is empty or no columns to parse.")
     except Exception as e:
         print(f"An error occurred: {e}")
+
+
+
+# Define a custom function to handle the data parsing
+def custom_split(line):
+    # First, split the line by commas
+    parts = re.split(r',\s*', line)
+    
+    # For the second element, further split by spaces
+    if len(parts) > 1:
+        second_element_split = parts[1].split()
+        # Replace the second element with the two parts split by space
+        parts = parts[:1] + second_element_split + parts[2:]
+    
+    return parts
+
+def read_binary_result_file(fn):
+    """
+    Reads a custom result file and returns a DataFrame.
+
+    Parameters:
+    fn (str): The path to the custom result file.
+
+    Returns:
+    pandas.DataFrame: The DataFrame containing the data from the custom result file.
+    """
+
+    # Read the data from the text file
+    with open(fn, 'r') as file:
+        data = [custom_split(line.strip()) for line in file]
+
+    cols = [
+        'sobject_id',
+        'residual',
+        'rchi2',
+        'f_contr',
+        'mass_1',
+        'age_1',
+        'metallicity_1',
+        'rv_1',
+        'fe_h_1',
+        'vmic_1',
+        'vsini_1',
+        'mass_2',
+        'age_2',
+        'metallicity_2',
+        'rv_2',
+        'fe_h_2',
+        'vmic_2',
+        'vsini_2',
+        'teff_1',
+        'teff_2',
+        'logg_1',
+        'logg_2',
+        'logl_1',
+        'logl_2'
+    ]
+
+    # Convert the data to a pandas DataFrame
+    data = pd.DataFrame(data, columns=cols)
+    # Remove rows with None or NaN in 'age_1' column
+    data = data.dropna(subset=['age_1'])
+    # Convert all columns except the first one to float
+    data.iloc[:, 0] = data.iloc[:, 0].astype(int)
+    data.iloc[:, 1:] = data.iloc[:, 1:].astype(float)
+    data['delta_rv_GALAH'] = abs(data['rv_2'] - data['rv_1'])
+
+    return data
