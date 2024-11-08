@@ -2,13 +2,14 @@ import numpy as np
 import matplotlib.pyplot as plt
 import AnalysisFunctions as af
 from pandas import DataFrame
+from pandas import Series as Series
 important_lines, important_molecules = af.load_dr3_lines()
 
 class StellarModel:
     interpolator = None
 
     # Constructor with default labels and components. Override for custom labels and components
-    def __init__(self, id="No ID", labels = ['rv', 'teff', 'logg', 'fe_h', 'vmic', 'vsini'], fixed_labels=[], components = 2, same_fe_h=False, interpolator=None, interpolate_flux=False):
+    def __init__(self, id="No ID", labels = ['rv', 'teff', 'logg', 'FeH', 'vmic', 'vsini'], fixed_labels=[], components = 2, same_fe_h=False, interpolator=None, interpolate_flux=False):
 
     # Dictionaries for labels, bounds, and initial values
     # These should be instance level variables not class level. Otherwise they will be shared between all instances.
@@ -23,6 +24,7 @@ class StellarModel:
         self.wavelengths = []
         self.flux = []
         self.model_flux = []
+        self.component_model_fluxes = {}
 
         self.param_data = {}
 
@@ -54,7 +56,7 @@ class StellarModel:
         if interpolator is not None:
             self.interpolator = interpolator
 
-            if all(label in self.unique_labels for label in ['mass']) and all(label in self.fixed_labels for label in ['age', 'metallicity']):
+            if all(label in self.unique_labels for label in ['mass']) and all(label in self.fixed_labels for label in ['age', 'FeH']):
                 self.add_param('teff', 0)
                 self.add_param('logg', 0)
                 self.add_param('logl', 0)
@@ -70,6 +72,8 @@ class StellarModel:
         self.param_data['residual'].append(r)
 
     def load_data(self, data):
+        # print(type(data))
+        # print("Type: ", type())
         # Check if data is a DataFrame
         if type(data) is DataFrame:
             row = data[data['sobject_id'] == self.id]
@@ -81,20 +85,30 @@ class StellarModel:
             spectrum = af.read_spectrum(self.id)
             self.generate_model(spectrum)
 
+        elif isinstance(data, Series):
+            for col in data.keys():
+                # If col exists in the model.params, set the value
+                if col in self.get_labels():
+                    # print(col, data[col])
+                    self.params[col] = data[col]
+            # print(self.params)
+            spectrum = af.read_spectrum(self.id)
+            self.generate_model(spectrum)
+
     def interpolate(self):
         if self.interpolator is not None:
             # Accepts mass, log(age), metallicity.
             # Outputs Teff, logg, and log(L) bolometric (flux)
 
-            if all(label in self.unique_labels for label in ['mass']) and all(label in self.fixed_labels for label in ['age', 'metallicity']):
+            if all(label in self.unique_labels for label in ['mass']) and all(label in self.fixed_labels for label in ['age', 'FeH']):
                 # Both components will have the same starting values.
                 # Provide the log of the age in Gyr for interpolation
                 # TODO Change this to be dynamic based on the number of components
 
                 # Star 1
-                interpolate_1 = self.interpolator(self.params['mass_1'], np.log10(self.params['age_1'] * 1e9), self.params['metallicity_1'])
+                interpolate_1 = self.interpolator(self.params['mass_1'], np.log10(self.params['age_1'] * 1e9), self.params['FeH_1'])
                 # Star 2
-                interpolate_2 = self.interpolator(self.params['mass_2'], np.log10(self.params['age_2'] * 1e9), self.params['metallicity_2'])
+                interpolate_2 = self.interpolator(self.params['mass_2'], np.log10(self.params['age_2'] * 1e9), self.params['FeH_2'])
 
                 # self.set_param('teff', (10 ** interpolate[0]) / 1000)
                 # self.set_param('logg', interpolate[1])
@@ -127,7 +141,7 @@ class StellarModel:
                     self.params['f_contr'] = flux_ratio
 
             else:
-                print("Isochrone labels not found in model labels. Please add 'mass', 'age', and 'metallicity' to model labels for interpolation")
+                print("Isochrone labels not found in model labels. Please add 'mass', 'age', and 'fe_h' to model labels for interpolation")
 
     # For single parameter retrieval (E.g. teff_1 not teff)
     def get_param(self, param):
@@ -148,6 +162,7 @@ class StellarModel:
         return [label for label in self.model_labels.values() if label.split('_')[-1] == str(component)]
 
     def get_params(self, values_only=False, exclude_fixed=False):
+
 
         if values_only:
             if exclude_fixed:
@@ -265,21 +280,52 @@ class StellarModel:
     def get_rchi2(self):
         return np.sum((self.model_flux - self.flux) ** 2) / (len(self.flux) - len(self.params))
 
-    def plot(self, title_text=""):
+    def plot(self, title_text="", lines=None, line_buffer=10, no_lines=5, random_lines=False, component_fluxes=False, component_offset=0, vlines=True, show_plot=True):
         global important_lines
         
         # Initialize lists to hold legend handles and labels
         handles, labels = [], []
 
-        no_plots = 10
+
+
+        if lines is None:
+            if random_lines:
+                # Choose 10 random indices between 0 and the number of important lines
+                random_indices = np.random.choice(len(important_lines), no_lines, replace=False)
+                # Get the corresponding lines
+                plot_lines = [important_lines[i] for i in random_indices]
+            else:
+                plot_lines = important_lines[0:no_lines]
+
+            no_plots = no_lines # How many lines to show from important lines
+        else:
+            plot_lines = lines
+            no_plots = len(lines)
+
         if self.wavelengths.size > 0 and self.flux.size > 0 and self.model_flux.size > 0:
-            fig, axes = plt.subplots(1, no_plots, figsize=(30, 5), sharey=True)
+            # Clip the value to max 30
+            figsize = min(60, no_plots * 5)
+            fig, axes = plt.subplots(1, no_plots, figsize=(figsize, 5), sharey=True)
             # Iterate over each line and corresponding subplot
-            for i, line in enumerate(important_lines[0:no_plots]):
+            for i, line in enumerate(plot_lines[0:no_plots]):
+
+
+
                 # Define the region to plot: line ± 5 Å
-                line_wvl = line[0]
-                min_wave = line_wvl - 5
-                max_wave = line_wvl + 5
+                if lines is None:
+                    line_wvl = line[0]
+                else:
+                    line_wvl = line
+
+                    # Check if the line is in the important lines list and use this precise wavelength instead of the one passed in manually.
+                    for important_line in important_lines:
+                        wavelength, name1, name2 = important_line
+                        if abs(line - wavelength) <= 1:
+                            line = wavelength
+                            line_wvl = wavelength
+                
+                min_wave = line_wvl - line_buffer
+                max_wave = line_wvl + line_buffer
                 
                 # Select data within the specified wavelength range
                 mask = (self.wavelengths >= min_wave) & (self.wavelengths <= max_wave)
@@ -288,19 +334,73 @@ class StellarModel:
                 h1, = axes[i].plot(self.wavelengths[mask], self.flux[mask], label='Observed Data')
                 h2, = axes[i].plot(self.wavelengths[mask], self.model_flux[mask], label='Model Fit', linestyle='--')
 
+                # Model components
+                # h4, = axes[i].plot(self.wavelengths[mask], self.model_flux[mask] * self.params['f_contr'], label='Model Fit Primary', linestyle='--')
+                # h5, = axes[i].plot(self.wavelengths[mask], self.model_flux[mask] * (1 - self.params['f_contr']), label='Model Fit Primary', linestyle='--')
+                if component_fluxes:
+                    h4, = axes[i].plot(self.wavelengths[mask], self.component_model_fluxes["model_component_1"][mask], label='Model Fit Primary', linestyle='--', c='r')
+                    h5, = axes[i].plot(self.wavelengths[mask], self.component_model_fluxes["model_component_2"][mask], label='Model Fit Primary', linestyle='--', c='b')
+
+                # h6, = axes[i].plot(self.wavelengths[mask], self.component_model_fluxes["model_component_1"][mask] + self.component_model_fluxes["model_component_2"][mask], label='Model Fit Primary', linestyle='--', c='g')
+
                 difference = abs(self.model_flux[mask] - self.flux[mask])
                 h3, = axes[i].plot(self.wavelengths[mask], difference, label='Model Delta', linestyle='--')
                 axes[i].fill_between(self.wavelengths[mask], 0, difference, color='gray', alpha=0.3)
-                
+
+                # vlines = [7771.94, 7774.17, 7775.39]
+                # for vline in vlines:
+                #     axes[i].vlines(vline, 0, 1, colors='r', linestyles='dotted')
+                #     axes[i].vlines(vline + 4, 0, 1, colors='orange', linestyles='dotted')
+
+                # Plot vertical line at the line wavelength
+                if vlines:
+                    shifted_line = af.rv_shift(self.params['rv_1'] - self.params['rv_1'], line_wvl)
+                    axes[i].vlines(shifted_line, 0, 1.15, colors='r', linestyles='dotted')
+                    # Annotate the vlines with the radial velocity shifts
+                    axes[i].text(shifted_line + 0.2, 1.13, f'$\\lambda_1$: {round(shifted_line, 3)} Å', color='r', bbox=dict(facecolor='white', edgecolor='none', boxstyle='round, pad=0.3'))
+
+                    shifted_line = af.rv_shift(self.params['rv_1'] - self.params['rv_2'], line_wvl)
+                    axes[i].vlines(shifted_line, 0, 1.05, colors='blue', linestyles='dotted')
+                    # axes[i].text(shifted_line + 0.2, 1.03, f'RV2: {round(self.params["rv_2"], 0)} km/s', color='blue', bbox=dict(facecolor='white', edgecolor='none', boxstyle='round, pad=0.3'))
+                    axes[i].text(shifted_line + 0.2, 1.03, f'$\\lambda_2$: {round(shifted_line, 3)} Å', color='blue', bbox=dict(facecolor='white', edgecolor='none', boxstyle='round, pad=0.3'))
+                    
+
                 # Set subplot title and labels
-                axes[i].set_title(f'{line[1]} ({line[0]} Å)')
-                axes[i].set_xlabel('Wavelength')
+                skip_title = False
+                if lines is None:
+                    axes[i].set_title(f'{line[1]} ({line[0]} Å)')
+                else:
+                    # Check if any of the plot lines are in the important lines list and use the name instead of the wavelength
+                    for important_line in important_lines:
+                        wavelength, name1, name2 = important_line
+                        if abs(line - wavelength) <= 1:
+                            axes[i].set_title(f'{name1} ({line} Å)')
+                            skip_title = True
+
+                    if not skip_title:
+                        axes[i].set_title(f'({line} Å)')
+
+
+                axes[i].set_xlabel('Wavelength (Å)')
+                x_ticks = np.arange(min_wave, max_wave + 1, line_buffer / 2)
+                x_ticks = [int(x) for x in x_ticks]
+                axes[i].set_xticks(x_ticks)
+
                 if i == 0:
                     axes[i].set_ylabel('Flux')
                     handles.extend([h1, h2, h3])
-                    labels.extend(['Observed Data', 'Model Fit', 'Model Delta'])
+                    labels.extend(['Observed Data', 'Binary Model', 'Model Residual'])
 
-                axes[i].set_ylim(-0.1, 1.2)
+                if component_offset < 0:
+                    component_offset = 0
+                axes[i].set_ylim(-0.1, 1.2 + component_offset)
+
+                if i == 0:
+                    # Draw a vertical line on the plot from y = 0.2 to y = 0.8 at x = line_wvl
+                    axes[i].axvline(x=line_wvl - line_buffer - 2, ymin=0.2, ymax=0.8, color='black', linestyle='-')
+                    # Add a scatter point corresponding to the flux ratio on the line
+                    axes[i].scatter(line_wvl - line_buffer - 2, self.params["f_contr"], color='r', s=25, marker='o')
+                    axes[i].scatter(line_wvl - line_buffer - 2, self.params["f_contr"], color='r', s=255, marker='_')
 
             # Adjust layout to prevent overlap
             model_agreement_percentage = 100 * np.sum(abs(self.model_flux - self.flux)) / len(self.flux)
@@ -320,7 +420,7 @@ class StellarModel:
                     "   $r\\chi^{2} 10^{3}$: " + str(round(model_rchi, 6))
             
             title = title + " " + title_text
-            plt.suptitle(title)
+            # plt.suptitle(title)
             # One legend for all plots, positioned in the center underneath
             # axes[0].legend(loc='upper center', bbox_to_anchor=(0.5, -0.05), ncol=no_plots)
             fig.legend(handles=handles, labels=labels, loc='upper center', bbox_to_anchor=(0.5, -0.01), ncol=no_plots)
@@ -333,7 +433,7 @@ class StellarModel:
                     "   logg$_1$: " + str(round(self.params["logg_1"], 3)) + \
                     "   mass$_1$: " + str(round(self.params["mass_1"], 3)) + \
                     "   age$_1$: " + str(round(self.params["age_1"], 4)) + \
-                    "   metallicity$_1$: " + str(round(self.params["metallicity_1"], 4))
+                    "   metallicity$_1$: " + str(round(self.params["FeH_1"], 4))
             
             annotation2 = \
                     "   rv$_2$: " + str(round(self.params["rv_2"], 1)) + \
@@ -341,13 +441,27 @@ class StellarModel:
                     "   logg$_2$: " + str(round(self.params["logg_2"], 3)) + \
                     "   mass$_2$: " + str(round(self.params["mass_2"], 3)) + \
                     "   age$_2$: " + str(round(self.params["age_2"], 4)) + \
-                    "   metallicity$_2$: " + str(round(self.params["metallicity_2"], 4))
+                    "   metallicity$_2$: " + str(round(self.params["FeH_2"], 4))
 
-            fig.text(x_start - 0.12, -0.2, "Flux Ratio: " + str(round(self.params["f_contr"], 4)), ha='center', va='center', fontsize=18)
-            fig.text(x_start + 0.12, -0.15, annotation1, ha='center', va='center', fontsize=18)
-            fig.text(x_start + 0.12, -0.25, annotation2, ha='center', va='center', fontsize=18)
+            # fig.text(x_start - 0.12, -0.2, "Flux Ratio: " + str(round(self.params["f_contr"], 4)), ha='center', va='center', fontsize=18)
+            # fig.text(x_start + 0.12, -0.15, annotation1, ha='center', va='center', fontsize=18)
+            # fig.text(x_start + 0.12, -0.25, annotation2, ha='center', va='center', fontsize=18)
+            fig.text(0.05, 0, f'$RV_1$: {round(self.params["rv_1"], )} km/s', color='r', bbox=dict(facecolor='white', edgecolor='none', boxstyle='round, pad=0.3'))
+            fig.text(0.05, -0.05, f'$RV_2$: {round(self.params["rv_2"], )} km/s', color='blue', bbox=dict(facecolor='white', edgecolor='none', boxstyle='round, pad=0.3'))
 
             plt.tight_layout()
-            plt.show()
+
+            if show_plot:
+                plt.show()  
+            else:
+                plt.savefig(f'plots/2/spec_{title_text}.png')
+                plt.close()
+
+                # params = self.get_params(values_only=True)
+                # params_list = ', '.join(map(str, params))
+                # with open("animations/fit_results.txt", "a") as f:
+                #     f.write(f"{self.id}, {self.get_residual()}, {self.get_rchi2()}, {params_list}\n")
+
+
         else:
             print('No data to plot')

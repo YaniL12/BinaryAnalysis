@@ -374,8 +374,8 @@ def create_synthetic_spectrum(model_parameters, model_labels, default_model=None
         logg = model_parameters['logg']
     else:
         raise ValueError('You have to define logg as input parameter')
-    if 'fe_h' in model_labels:
-        fe_h = model_parameters['fe_h']
+    if 'FeH' in model_labels:
+        fe_h = model_parameters['FeH']
     else:
         raise ValueError('You have to define fe_h as input parameter')
 
@@ -599,7 +599,8 @@ def galah_kern(fwhm, b):
 
     size_grid = int(size) # we limit the size of kernel, so it is as small as possible (or minimal size) for faster calculations
     if size_grid<7: size_grid=7
-    x= scipy.mgrid[-size_grid:size_grid+1]
+    # x= scipy.mgrid[-size_grid:size_grid+1]
+    x= np.mgrid[-size_grid:size_grid+1]
     g = np.exp(-0.693147*np.power(abs(2*x/fwhm), b))
     return g / np.sum(g)
 
@@ -754,11 +755,11 @@ def create_synthetic_binary_spectrum_at_observed_wavelength(model, spectrum, sam
 
 #   TODO Fix this part for new object oriented model
     if same_fe_h:
-        component_1_labels = np.insert(component_1_labels,3,'fe_h')
-        component_2_labels = np.insert(component_2_labels,3,'fe_h')
+        component_1_labels = np.insert(component_1_labels,3,'FeH')
+        component_2_labels = np.insert(component_2_labels,3,'FeH')
     
-        component_1_model_parameter = np.insert(component_1_model_parameter, 3, model_parameters[model_labels=='fe_h'][0])
-        component_2_model_parameter = np.insert(component_2_model_parameter, 3, model_parameters[model_labels=='fe_h'][0])
+        component_1_model_parameter = np.insert(component_1_model_parameter, 3, model_parameters[model_labels=='FeH'][0])
+        component_2_model_parameter = np.insert(component_2_model_parameter, 3, model_parameters[model_labels=='FeH'][0])
 
 
     # This returns synthetic spectra for each component created by the neural network
@@ -813,6 +814,10 @@ def create_synthetic_binary_spectrum_at_observed_wavelength(model, spectrum, sam
         renormalisation_fit = sclip((spectrum['wave_ccd'+str(ccd)], spectrum['counts_ccd'+str(ccd)] / spectrum['flux_model_ccd'+str(ccd)]), chebyshev,int(3), ye=spectrum['counts_unc_ccd'+str(ccd)], su=5, sl=5, min_data=100, verbose=False)
         spectrum['flux_obs_ccd'+str(ccd)] = spectrum['counts_ccd'+str(ccd)] / renormalisation_fit[0]
         spectrum['flux_obs_unc_ccd'+str(ccd)] = spectrum['counts_unc_ccd'+str(ccd)] / renormalisation_fit[0]
+
+        # Optionally return the model fluxes for each component
+        spectrum['flux_model_ccd'+str(ccd)+'_component_1'] = component_1_model_ccd_lsf_at_observed_wavelength
+        spectrum['flux_model_ccd'+str(ccd)+'_component_2'] = component_2_model_ccd_lsf_at_observed_wavelength
         
 
     # Join spectra produced by the CCDs.
@@ -820,6 +825,13 @@ def create_synthetic_binary_spectrum_at_observed_wavelength(model, spectrum, sam
     data = np.concatenate([spectrum['flux_obs_ccd'+str(ccd)] for ccd in spectrum['available_ccds']])
     sigma2 = np.concatenate([spectrum['flux_obs_unc_ccd'+str(ccd)] for ccd in spectrum['available_ccds']])**2
     data_model = np.concatenate([spectrum['flux_model_ccd'+str(ccd)] for ccd in spectrum['available_ccds']])
+
+    data_model_component_1 = np.concatenate([spectrum['flux_model_ccd'+str(ccd)+'_component_1'] for ccd in spectrum['available_ccds']])
+    data_model_component_2 = np.concatenate([spectrum['flux_model_ccd'+str(ccd)+'_component_2'] for ccd in spectrum['available_ccds']])
+    
+    model.component_model_fluxes["model_component_1"] = (data_model_component_1 * f_contr) + f_contr
+    model.component_model_fluxes["model_component_2"] = (data_model_component_2 * (1-f_contr)) + (1-f_contr)
+
 
     # Repack the model parameters into the array
     # The code updates the parameters individually, they can be modified within the model itself. Manually repack.
@@ -896,6 +908,8 @@ def get_flux_only(wave_init, model, spectrum, same_fe_h, unmasked, *model_parame
             model.generate_model(spectrum)
             model.plot(title_text=str(iterations))
             print(iterations, model.params)
+
+        # model.plot(title_text=str(model.id) + "_" + str(iterations), show_plot=False, component_fluxes=True)
 
     # Override f_contr with the value.
 

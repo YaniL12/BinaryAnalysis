@@ -67,10 +67,15 @@ def parse_readme(dat_file, readme_file):
     table_name = os.path.basename(dat_file)
     first_line_text = 'Byte-by-byte Description of file: ' + table_name
 
+    table_cols = []
+
     # Find the start of the byte-by-byte description for table4.dat
     for i, line in enumerate(lines):
         if first_line_text in line:
             table4_found = True
+
+            # Get the table column names. These should be 2 lines after the first_line_text
+            table_cols = lines[i + 2].split()
         
         if table4_found:       
             if line.__contains__('1-'):
@@ -84,27 +89,41 @@ def parse_readme(dat_file, readme_file):
             byte_description.append(line.strip())
 
     colspecs = []
-    column_names = []
+    column_label = []
     start = 0
+
+
+    label_index = table_cols.index('Label')
 
     for line in byte_description:
         parts = line.split()
         if '-' in parts[0]:
+            # This is the byte range. E.g. 1 - 8
             start = int(parts[0].split('-')[0])
-            end = int(parts[1])
+
+            # These are columns where the byte range has gone from space separated to hyphen separated with no spaces. E.g. 1 - 8 to 1-8:
+            if len(parts[0].split('-')[1]) > 0:
+                end = int(parts[0].split('-')[1])
+                column_label.append(parts[label_index ])
+            else:
+                end = int(parts[1])
+                column_label.append(parts[label_index + 1])
 
             colspecs.append((start - 1, end))
-            column_names.append(parts[4])
+            # column_label.append(' '.join(parts[label_index + 1:]))
 
-        elif parts[0].isdigit():
+            # print(column_label[-1])
+
+        # What if the first element is a number? E.g. the first byte index is just = 5 not 0-5
+        elif parts[0].isdigit() and '-' in parts:
             end = int(parts[0])
             colspecs.append((start - 1, end))
-            column_names.append(parts[3])
+            column_label.append(parts[label_index + 1])
 
         else:
             continue
     
-    return colspecs, column_names
+    return colspecs, column_label
 
 def read_dat_file(dat_file, readme_file="ReadMe"):
     """
@@ -141,7 +160,7 @@ def custom_split(line):
     
     return parts
 
-def read_binary_result_file(fn):
+def read_binary_result_file(fn, coltype=0):
     """
     Reads a custom result file and returns a DataFrame.
 
@@ -156,32 +175,35 @@ def read_binary_result_file(fn):
     with open(fn, 'r') as file:
         data = [custom_split(line.strip()) for line in file]
 
-    cols = [
-        'sobject_id',
-        'residual',
-        'rchi2',
-        'f_contr',
-        'mass_1',
-        'age_1',
-        'metallicity_1',
-        'rv_1',
-        'fe_h_1',
-        'vmic_1',
-        'vsini_1',
-        'mass_2',
-        'age_2',
-        'metallicity_2',
-        'rv_2',
-        'fe_h_2',
-        'vmic_2',
-        'vsini_2',
-        'teff_1',
-        'teff_2',
-        'logg_1',
-        'logg_2',
-        'logl_1',
-        'logl_2'
-    ]
+    if coltype == 0:
+        cols = [
+            'sobject_id',
+            'residual',
+            'rchi2',
+            'f_contr',
+            'mass_1',
+            'age_1',
+            'metallicity_1',
+            'rv_1',
+            'fe_h_1',
+            'vmic_1',
+            'vsini_1',
+            'mass_2',
+            'age_2',
+            'metallicity_2',
+            'rv_2',
+            'fe_h_2',
+            'vmic_2',
+            'vsini_2',
+            'teff_1',
+            'teff_2',
+            'logg_1',
+            'logg_2',
+            'logl_1',
+            'logl_2'
+        ]
+    else:
+        cols = ['sobject_id', 'residual', 'rchi2', 'f_contr', 'mass_1', 'age_1', 'metallicity_1', 'rv_1', 'fe_h_1', 'vmic_1', 'vsini_1', 'teff_1', 'logg_1', 'logl_1', 'mass_2', 'age_2', 'metallicity_2', 'rv_2', 'fe_h_2', 'vmic_2', 'vsini_2', 'teff_2', 'logg_2', 'logl_2']
 
     # Convert the data to a pandas DataFrame
     data = pd.DataFrame(data, columns=cols)
