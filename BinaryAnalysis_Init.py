@@ -20,6 +20,11 @@ import scipy
 from scipy.optimize import curve_fit
 from scipy import signal
 
+
+# /pkg/linux/anaconda3/bin/python -m pip install pyswarm <-- Install here if requred. This is the python used by PBS script.
+import pyswarm
+from pyswarm import pso
+
 from astropy.table import Table
 import AnalysisFunctions as af
 import multiprocessing
@@ -133,7 +138,8 @@ def run_script(args):
 
     # Modify the command to run your script with the object ID argument
     print("Beginning script for object_id", object_id)
-    command = ["python", "BinaryAnalysis.py", str(object_id), str(tmass_id), str(ages), str(masses), str(m_hs)]
+    print("Arguments:", object_id, tmass_id, ages, masses, m_hs)
+    command = ["python3", "BinaryAnalysis.py", str(object_id), str(tmass_id), str(ages), str(masses), str(m_hs)]
 
     # Status codes:
     # 0 - Queued, 1 - Processing, 2 - Completed, -1 - Failed

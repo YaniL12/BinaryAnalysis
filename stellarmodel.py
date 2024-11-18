@@ -9,14 +9,18 @@ class StellarModel:
     interpolator = None
 
     # Constructor with default labels and components. Override for custom labels and components
-    def __init__(self, id="No ID", labels = ['rv', 'teff', 'logg', 'FeH', 'vmic', 'vsini'], fixed_labels=[], components = 2, same_fe_h=False, interpolator=None, interpolate_flux=False):
+    def __init__(self, id="No ID", labels = ['rv', 'teff', 'logg', 'FeH', 'vmic', 'vsini'], fixed_labels=[], single_labels=[], components = 2, same_fe_h=False, interpolator=None, interpolate_flux=False):
 
     # Dictionaries for labels, bounds, and initial values
     # These should be instance level variables not class level. Otherwise they will be shared between all instances.
         self.id = id
         self.components = components
+        self.same_fe_h = same_fe_h
+
         self.model_labels = {}
         self.unique_labels = []
+        self.single_labels = single_labels
+
         self.bounds = {}
         self.params = {}
         self.indices = {}
@@ -46,6 +50,9 @@ class StellarModel:
             for i, label in enumerate(labels):
                 self.model_labels[label + '_' + str(j+1)] = label + '_' + str(j+1)
 
+        # Add single labels to the model labels. These are those that are the same for both components.
+        for i, label in enumerate(single_labels):
+            self.model_labels[label] = label
 
         # Instantiate bounds and params dictionaries with defaults
         for i, label in enumerate(self.model_labels):
@@ -56,10 +63,19 @@ class StellarModel:
         if interpolator is not None:
             self.interpolator = interpolator
 
-            if all(label in self.unique_labels for label in ['mass']) and all(label in self.fixed_labels for label in ['age', 'FeH']):
+            # Interpolator requires mass, age, and metallicity to be present in the model labels
+            # Mass will be different for each component, the remaining parameters will be the same for both components (age, FeH).
+            if same_fe_h and all(label in self.single_labels for label in ['age', 'FeH']) and all(label in self.unique_labels for label in ['mass']):
                 self.add_param('teff', 0)
                 self.add_param('logg', 0)
                 self.add_param('logl', 0)
+
+            elif all(label in self.unique_labels for label in ['mass', 'age']) and all(label in self.fixed_labels for label in ['FeH']):
+                self.add_param('teff', 0)
+                self.add_param('logg', 0)
+                self.add_param('logl', 0)
+
+                # self.interpolate()
         
         self.param_data = {key: [] for key in self.params.keys()}
         self.param_data['residual'] = []
@@ -100,48 +116,54 @@ class StellarModel:
             # Accepts mass, log(age), metallicity.
             # Outputs Teff, logg, and log(L) bolometric (flux)
 
-            if all(label in self.unique_labels for label in ['mass']) and all(label in self.fixed_labels for label in ['age', 'FeH']):
+            # if all(label in self.unique_labels for label in ['mass', 'age']) and all(label in self.fixed_labels for label in ['FeH']):
                 # Both components will have the same starting values.
                 # Provide the log of the age in Gyr for interpolation
                 # TODO Change this to be dynamic based on the number of components
 
+            if self.same_fe_h:
+                # Star 1
+                interpolate_1 = self.interpolator(self.params['mass_1'], np.log10(self.params['age'] * 1e9), self.params['FeH'])
+                # Star 2
+                interpolate_2 = self.interpolator(self.params['mass_2'], np.log10(self.params['age'] * 1e9), self.params['FeH'])
+            else:
                 # Star 1
                 interpolate_1 = self.interpolator(self.params['mass_1'], np.log10(self.params['age_1'] * 1e9), self.params['FeH_1'])
                 # Star 2
                 interpolate_2 = self.interpolator(self.params['mass_2'], np.log10(self.params['age_2'] * 1e9), self.params['FeH_2'])
 
-                # self.set_param('teff', (10 ** interpolate[0]) / 1000)
-                # self.set_param('logg', interpolate[1])
-                # self.set_param('logl', interpolate[2])
+            # self.set_param('teff', (10 ** interpolate[0]) / 1000)
+            # self.set_param('logg', interpolate[1])
+            # self.set_param('logl', interpolate[2])
 
-                self.params['teff_1'] = (10 ** interpolate_1[0]) / 1000
-                self.params['logg_1'] = interpolate_1[1]
-                self.params['logl_1'] = interpolate_1[2]
+            self.params['teff_1'] = (10 ** interpolate_1[0]) / 1000
+            self.params['logg_1'] = interpolate_1[1]
+            self.params['logl_1'] = interpolate_1[2]
 
-                self.params['teff_2'] = (10 ** interpolate_2[0]) / 1000
-                self.params['logg_2'] = interpolate_2[1]
-                self.params['logl_2'] = interpolate_2[2]
+            self.params['teff_2'] = (10 ** interpolate_2[0]) / 1000
+            self.params['logg_2'] = interpolate_2[1]
+            self.params['logl_2'] = interpolate_2[2]
 
-                # The optimiser has gone outside the bounds. Set parmaeters to unreasonable values. This should results in a high residual.
-                # Consider scaling parameters to prevent this in the optimiser (TODO)
-                if np.isnan(self.params['teff_1']) or np.isnan(self.params['teff_2']):
-                    # print("Interpolated values are NaN. Check input values for interpolation")
-                    self.params['teff_1'] = 0
-                    self.params['teff_2'] = 0
-                    self.params['logg_1'] = 0
-                    self.params['logg_2'] = 0
-                    self.params['logl_1'] = 0
-                    self.params['logl_2'] = 0
-                    # self.params['f_contr'] = 0.5
+            # The optimiser has gone outside the bounds. Set parmaeters to unreasonable values. This should results in a high residual.
+            # Consider scaling parameters to prevent this in the optimiser (TODO)
+            if np.isnan(self.params['teff_1']) or np.isnan(self.params['teff_2']):
+                # print("Interpolated values are NaN. Check input values for interpolation")
+                self.params['teff_1'] = 0
+                self.params['teff_2'] = 0
+                self.params['logg_1'] = 0
+                self.params['logg_2'] = 0
+                self.params['logl_1'] = 0
+                self.params['logl_2'] = 0
+                # self.params['f_contr'] = 0.5
 
-                if self.interpolate_flux:
-                    f_1 = 10 ** self.params['logl_1']
-                    f_2 = 10 ** self.params['logl_2']
-                    flux_ratio = f_1 / (f_1 + f_2)
-                    self.params['f_contr'] = flux_ratio
+            if self.interpolate_flux:
+                f_1 = 10 ** self.params['logl_1']
+                f_2 = 10 ** self.params['logl_2']
+                flux_ratio = f_1 / (f_1 + f_2)
+                self.params['f_contr'] = flux_ratio
 
-            else:
-                print("Isochrone labels not found in model labels. Please add 'mass', 'age', and 'fe_h' to model labels for interpolation")
+            # else:
+            #     print("Isochrone labels not found in model labels. Please add 'mass', 'age', and 'fe_h' to model labels for interpolation")
 
     # For single parameter retrieval (E.g. teff_1 not teff)
     def get_param(self, param):
@@ -182,6 +204,8 @@ class StellarModel:
         if param in self.unique_labels:
             for i in range(self.components):
                 self.bounds[param + '_' + str(i+1)] = bounds
+        elif param in self.single_labels:
+            self.bounds[param] = bounds
 
     
     # Returns initial parameters as a dictionary without suffixes for each component. E.g. fe_h_1 = 1 -> fe_h = 1
@@ -272,7 +296,7 @@ class StellarModel:
                 self.bounds[param + '_' + str(i+1)] = (-1e10, 1e10)
 
     def generate_model(self, spectrum):
-        self.wavelengths, self.flux, sigma2_iter1, self.model_flux, unmasked_iter1 = af.return_wave_data_sigma_model(self, spectrum, same_fe_h = False) 
+        self.wavelengths, self.flux, sigma2_iter1, self.model_flux, unmasked_iter1 = af.return_wave_data_sigma_model(self, spectrum, self.same_fe_h) 
         
     def get_residual(self):
         return 100 * np.sum(abs(self.model_flux - self.flux)) / len(self.flux)
@@ -413,35 +437,36 @@ class StellarModel:
             if self.interpolator is not None:
                 title = "ID: " + str(self.id) + \
                     "   Agreement: " + str(model_agreement_percentage) + "%" \
-                    "   rchi2" + str(model_rchi)
+                    "   $r\\chi^{2} 10^{3}$: " + str(round(model_rchi, 6))
             else:
                 title = "ID: " + str(self.id) + \
                     "   Agreement: " + str(round(model_agreement_percentage, 4)) + "%" \
                     "   $r\\chi^{2} 10^{3}$: " + str(round(model_rchi, 6))
             
             title = title + " " + title_text
-            # plt.suptitle(title)
+            plt.suptitle(title)
             # One legend for all plots, positioned in the center underneath
             # axes[0].legend(loc='upper center', bbox_to_anchor=(0.5, -0.05), ncol=no_plots)
             fig.legend(handles=handles, labels=labels, loc='upper center', bbox_to_anchor=(0.5, -0.01), ncol=no_plots)
 
             # Annotate the figure
             x_start = 0.4
-            annotation1 = \
-                    "   rv$_1$: " + str(round(self.params["rv_1"], 1)) + \
-                    "   teff$_1$: " + str(round(self.params["teff_1"] * 1e3)) + \
-                    "   logg$_1$: " + str(round(self.params["logg_1"], 3)) + \
-                    "   mass$_1$: " + str(round(self.params["mass_1"], 3)) + \
-                    "   age$_1$: " + str(round(self.params["age_1"], 4)) + \
-                    "   metallicity$_1$: " + str(round(self.params["FeH_1"], 4))
-            
-            annotation2 = \
-                    "   rv$_2$: " + str(round(self.params["rv_2"], 1)) + \
-                    "   teff$_2$: " + str(round(self.params["teff_2"] * 1e3)) + \
-                    "   logg$_2$: " + str(round(self.params["logg_2"], 3)) + \
-                    "   mass$_2$: " + str(round(self.params["mass_2"], 3)) + \
-                    "   age$_2$: " + str(round(self.params["age_2"], 4)) + \
-                    "   metallicity$_2$: " + str(round(self.params["FeH_2"], 4))
+            if self.interpolate_flux:
+                annotation1 = \
+                        "   rv$_1$: " + str(round(self.params["rv_1"], 1)) + \
+                        "   teff$_1$: " + str(round(self.params["teff_1"] * 1e3)) + \
+                        "   logg$_1$: " + str(round(self.params["logg_1"], 3)) + \
+                        "   mass$_1$: " + str(round(self.params["mass_1"], 3))
+                        # "   age$_1$: " + str(round(self.params["age_1"], 4)) + \
+                        # "   metallicity$_1$: " + str(round(self.params["FeH_1"], 4))
+                
+                annotation2 = \
+                        "   rv$_2$: " + str(round(self.params["rv_2"], 1)) + \
+                        "   teff$_2$: " + str(round(self.params["teff_2"] * 1e3)) + \
+                        "   logg$_2$: " + str(round(self.params["logg_2"], 3)) + \
+                        "   mass$_2$: " + str(round(self.params["mass_2"], 3))
+                        # "   age$_2$: " + str(round(self.params["age_2"], 4)) + \
+                        # "   metallicity$_2$: " + str(round(self.params["FeH_2"], 4))
 
             # fig.text(x_start - 0.12, -0.2, "Flux Ratio: " + str(round(self.params["f_contr"], 4)), ha='center', va='center', fontsize=18)
             # fig.text(x_start + 0.12, -0.15, annotation1, ha='center', va='center', fontsize=18)

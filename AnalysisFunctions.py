@@ -365,7 +365,6 @@ def create_synthetic_spectrum(model_parameters, model_labels, default_model=None
     This function creates a synthetic spectrum from a neural network model for each individual star.
     Pass each star's individual labels and paramater values.
     """
-    
     if 'teff' in model_labels:
         teff = 1000. * model_parameters['teff']
     else:
@@ -377,7 +376,7 @@ def create_synthetic_spectrum(model_parameters, model_labels, default_model=None
     if 'FeH' in model_labels:
         fe_h = model_parameters['FeH']
     else:
-        raise ValueError('You have to define fe_h as input parameter')
+        raise ValueError('You have to define FeH as input parameter')
 
     if 'vmic' in model_labels:
         vmic = model_parameters['vmic']
@@ -755,11 +754,11 @@ def create_synthetic_binary_spectrum_at_observed_wavelength(model, spectrum, sam
 
 #   TODO Fix this part for new object oriented model
     if same_fe_h:
-        component_1_labels = np.insert(component_1_labels,3,'FeH')
-        component_2_labels = np.insert(component_2_labels,3,'FeH')
-    
-        component_1_model_parameter = np.insert(component_1_model_parameter, 3, model_parameters[model_labels=='FeH'][0])
-        component_2_model_parameter = np.insert(component_2_model_parameter, 3, model_parameters[model_labels=='FeH'][0])
+        component_1_labels = np.insert(component_1_labels,3 ,'FeH')
+        component_2_labels = np.insert(component_2_labels,3 ,'FeH')
+
+        component_1_model_parameter['FeH'] = model.params['FeH']
+        component_2_model_parameter['FeH'] = model.params['FeH']
 
 
     # This returns synthetic spectra for each component created by the neural network

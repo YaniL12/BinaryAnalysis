@@ -175,6 +175,9 @@ def read_binary_result_file(fn, coltype=0):
     with open(fn, 'r') as file:
         data = [custom_split(line.strip()) for line in file]
 
+
+# 'f_contr': 0.5, 'mass_1': 0.888822, 'rv_1': 116.17699, 'vmic_1': 1.5, 'vsini_1': 4.0, 'mass_2': 0.888822, 'rv_2': 38.0, 'vmic_2': 1.5, 'vsini_2': 4.0, 'teff_1': 5.3533408203125, 'teff_2': 5.3533408203125, 'logg_1': 4.327199, 'logg_2': 4.327199, 'logl_1': 0, 'logl_2': 0}
+
     if coltype == 0:
         cols = [
             'sobject_id',
@@ -183,14 +186,14 @@ def read_binary_result_file(fn, coltype=0):
             'f_contr',
             'mass_1',
             'age_1',
-            'metallicity_1',
+            # 'metallicity_1',
             'rv_1',
             'fe_h_1',
             'vmic_1',
             'vsini_1',
             'mass_2',
             'age_2',
-            'metallicity_2',
+            # 'metallicity_2',
             'rv_2',
             'fe_h_2',
             'vmic_2',
@@ -201,6 +204,31 @@ def read_binary_result_file(fn, coltype=0):
             'logg_2',
             'logl_1',
             'logl_2'
+        ]
+    elif coltype == 1:
+        cols = [
+            'sobject_id',
+            'residual',
+            'rchi2',
+            'f_contr',
+            'mass_1',
+            'rv_1',
+            'vmic_1',
+            'vsini_1',
+            'mass_2',
+            'rv_2',
+            'vmic_2',
+            'vsini_2',
+            'teff_1',
+            'teff_2',
+            'logg_1',
+            'logg_2',
+            'logl_1',
+            'logl_2',
+            'age_1',
+            'age_2',
+            'FeH_1',
+            'FeH_2'
         ]
     else:
         cols = ['sobject_id', 'residual', 'rchi2', 'f_contr', 'mass_1', 'age_1', 'metallicity_1', 'rv_1', 'fe_h_1', 'vmic_1', 'vsini_1', 'teff_1', 'logg_1', 'logl_1', 'mass_2', 'age_2', 'metallicity_2', 'rv_2', 'fe_h_2', 'vmic_2', 'vsini_2', 'teff_2', 'logg_2', 'logl_2']
