@@ -14,6 +14,7 @@ import subprocess
 import pandas as pd
 import json
 from astropy.io import fits
+import math
 
 # Scipy
 import scipy
@@ -31,6 +32,8 @@ import multiprocessing
 from multiprocessing.pool import ThreadPool as Pool
 # import mysql.connector
 
+from filelock import FileLock
+
 sys.path.append(os.path.join(working_directory, 'utils'))
 import AstroPandas as ap
 
@@ -41,15 +44,30 @@ from stellarmodel import StellarModel
 isochrone_table = Table.read(working_directory +  '/assets/parsec_isochrones_logt_8p00_0p01_10p17_mh_m2p75_0p25_m0p75_mh_m0p60_0p10_0p70_GaiaEDR3_2MASS.fits')
 isochrone_interpolator = af.load_isochrones()
 
-tracker_path = '/home/yanilach/public_html/avatar-tracker/'
+tracker_path = '/home/yanilach/public_html/avatar-tracker/tracking_files/'
+tracking_file = ""
+fit_results_file = ""
 
 file_lock = multiprocessing.Lock()
+
+
+# Are we running on the cluster?
+cluster = True
+if int(sys.argv[1]) == 1:
+    cluster = True
+
+def split_workload(data, num_chunks, chunk_index):
+    """Split data into chunks for parallel processing."""
+    chunk_size = math.ceil(len(data) / num_chunks)
+    start = chunk_size * chunk_index
+    end = start + chunk_size
+    return data[start:end]
 
 
 def edit_tracker(key, vals):
     # Step 1: Load existing data from JSON file (if it exists)
     try:
-        with open("AnalysisTracker.json", "r") as f:
+        with open(tracker_path + tracking_file, "r") as f:
             data = json.load(f)
     except (FileNotFoundError, json.JSONDecodeError):
         data = {}  # If the file doesn't exist or is empty, start with an empty dictionary
@@ -57,19 +75,29 @@ def edit_tracker(key, vals):
     # Step 2: 
     data[key] = vals
 
-    # Step 3: Write the updated data back to the JSON file
+    # Step 3: Ensure the directory for the web tracking file exists
+    Path(tracker_path).mkdir(parents=True, exist_ok=True)
+
+    # Step 4: Write the updated data back to the JSON file
+    # lock = FileLock("AnalysisTracker.json")
     with file_lock:
+    # with lock:
+        # Local tracking file
         with open("AnalysisTracker.json", "w") as f:
             json.dump(data, f, indent=4)  # Write JSON with pretty formatting
         
-        with open(tracker_path + "AnalysisTracker.json", "w") as f:
+        # Web tracking file
+        with open(tracker_path + tracking_file, "w") as f:
             json.dump(data, f, indent=4)  # Write JSON with pretty formatting
+
+            os.chmod(tracker_path + tracking_file, 0o644)
 
 
 def update_tracker(object_ids, val=0, err=None):
     # Step 1: Load existing data from JSON file (if it exists)
+    # -1 = Failed, 0 = Queued, 1 = Processing, 2 = Completed
     try:
-        with open("AnalysisTracker.json", "r") as f:
+        with open(tracker_path + tracking_file, "r") as f:
             data = json.load(f)
     except (FileNotFoundError, json.JSONDecodeError):
         data = {}  # If the file doesn't exist or is empty, start with an empty dictionary
@@ -101,45 +129,57 @@ def update_tracker(object_ids, val=0, err=None):
             if err:
                 data['objects'][str(s_id)]['error'] = err
 
+        # Check if this object has a timestart
+        if 'timestart' not in data['objects'][str(s_id)]: 
+            data['objects'][str(s_id)]['timestart'] = current_time
+
     # Step 3: Write the updated data back to the JSON file
+    # lock = FileLock("AnalysisTracker.json")
     with file_lock:
+
+        # Local tracking file
         with open("AnalysisTracker.json", "w") as f:
             json.dump(data, f, indent=4)  # Write JSON with pretty formatting
-        
-        with open(tracker_path + "AnalysisTracker.json", "w") as f:
-            json.dump(data, f, indent=4)  # Write JSON with pretty formatting
 
+        # Web tracking file
+        with open(tracker_path + tracking_file, "w") as f:
+            json.dump(data, f, indent=4)  # Write JSON with pretty formatting
+            
+            os.chmod(tracker_path + tracking_file, 0o644)
+
+def cleanup_PBS():
+    # Define source and backup directories
+    source_path = "/avatar/yanilach/"
+    backup_path = "/avatar/yanilach/previous_PBS_runs/"
+    
+    # Create the backup directory if it doesn't exist
+    Path(backup_path).mkdir(parents=True, exist_ok=True)
+    
+    # Iterate through files in the source directory
+    for file in os.listdir(source_path):
+        # Check if the filename contains '.o' or '.e'
+        if '.o' in file or '.e' in file:
+            source_file = os.path.join(source_path, file)
+            destination_file = os.path.join(backup_path, file)
+            
+            # Move the file
+            try:
+                os.rename(source_file, destination_file)
+                print(f"Moved {file} to {backup_path}")
+            except Exception as e:
+                print(f"Error moving {file}: {e}")
 
 
 def run_script(args):
     object_id, tmass_id, ages, masses, m_hs = args
-
-    # try:
-    #     model, residual = fit_model(args)
-    #     update_tracker([object_id], 1)
-
-    #     print("Done")
-    #     params = model.get_params(values_only=True)
-    #     params = ', '.join(map(str, params))
-    #     # print(params)
-
-    #     with file_lock:
-    #         with open("fit_results.txt", "a") as f:
-    #             f.write(f"{object_id}, {residual}, {params}\n")
-                
-
-    # except Exception as e:
-    #     print(f"Script failed for object_id {object_id}.")
-    #     print("Error message:", e)
-    #     update_tracker([object_id], -1)
-
-
     ### We HAVE to run this as an external script because of memory allocation issues!
 
     # Modify the command to run your script with the object ID argument
     print("Beginning script for object_id", object_id)
     print("Arguments:", object_id, tmass_id, ages, masses, m_hs)
     command = ["python3", "BinaryAnalysis.py", str(object_id), str(tmass_id), str(ages), str(masses), str(m_hs)]
+    
+    
 
     # Status codes:
     # 0 - Queued, 1 - Processing, 2 - Completed, -1 - Failed
@@ -161,8 +201,9 @@ def run_script(args):
         if 'RV2' not in final_line:
             update_tracker([object_id], 2)
 
+            # lock = FileLock("fit_results.txt")
             with file_lock:
-                with open("fit_results.txt", "a") as f:
+                with open(fit_results_file, "a") as f:
                     f.write(f"{object_id}, {final_line}\n")
         else:
             update_tracker([object_id], -1, err=final_line)
@@ -190,6 +231,18 @@ if __name__ == "__main__":
     # val = (1704150015010971, 0)
     # mycursor.execute(sql, val)
     # mydb.commit()
+
+
+    if cluster:
+        # Get PBS_ARRAY_INDEX and total jobs from PBS script
+        job_index = int(os.environ.get("PBS_ARRAY_INDEX", 0)) - 1
+        num_jobs = int(os.environ.get("PBS_ARRAY_LENGTH", 1))
+        num_jobs = 50
+
+        print(f"Running job {job_index + 1} of {num_jobs}")
+
+        if job_index == 1:
+            cleanup_PBS()
 
    # Table data
     GALAH_DR4_dir = '/avatar/buder/GALAH_DR4/'
@@ -224,29 +277,77 @@ if __name__ == "__main__":
     masses = binary_stars['mass'].values
     m_hs = binary_stars['fe_h'].values
 
-    # print(binary_stars['age'].values)
-    # print(ages)
-    
+    # print(object_ids)
+
+    # Split data into chunks for this PBS job
+    if cluster:
+        # Objects, number of total jobs, job index
+        object_ids = split_workload(object_ids, num_jobs, job_index)
+        tmass_ids = split_workload(tmass_ids, num_jobs, job_index)
+        ages = split_workload(ages, num_jobs, job_index)
+        masses = split_workload(masses, num_jobs, job_index)
+        m_hs = split_workload(m_hs, num_jobs, job_index)
+
+        if len(object_ids) < 1:
+            print(f"No data to process for PBS job index {job_index}. Exiting.")
+            exit(0)
+
     current_time = datetime.now().isoformat()  # e.g., '2024-09-11T14:23:45.123456'
+    # Get date and hours minutes only
+    current_time = current_time.split("T")[0] + "_" + current_time.split("T")[1].split(":")[0]
 
     # Move the current tracker to a backup file in a sudirectory and delete the current tracker
     # Check if a tracker file already exists
-    if os.path.exists(tracker_path + "AnalysisTracker.json"):
-        backup_path = tracker_path + "runs/"
+    if cluster:
+        tracker_path_suffix = f"_{job_index}"
+    else:
+        tracker_path_suffix = ""
+
+    tracking_file = "AnalysisTracker" + tracker_path_suffix + ".json"
+
+    print("Checking for file: ", tracker_path + tracking_file)
+    print(os.path.exists(tracker_path + tracking_file))
+    if os.path.exists(tracker_path + tracking_file):
+        backup_path = tracker_path + "previous_runs/" + current_time + "/"
         Path(backup_path).mkdir(parents=True, exist_ok=True)
-        os.rename(tracker_path + "AnalysisTracker.json", backup_path + "AnalysisTracker_" + current_time + ".json")
 
-    if os.path.exists("fit_results.txt"):
-        backup_path = "previous_fit_results/"
+        # We don't stricly need to move all files in a loop since this script is being called for each job.
+        # However we may change the number of jobs in the future so it's better to be safe.
+        if cluster:
+            for i in range(100):
+                if os.path.exists(tracker_path + tracking_file):
+                    os.rename(tracker_path + "AnalysisTracker_" + str(job_index) + ".json", backup_path + current_time  + "_" + tracking_file)
+            
+            if os.path.exists(tracker_path + tracking_file):
+                os.rename(tracker_path + tracking_file, backup_path + current_time + "_" + tracking_file)
+        else:
+            os.rename(tracker_path + tracking_file, backup_path + current_time + "_" + tracking_file)
+
+
+    fit_results_file = "fit_results" + tracker_path_suffix + ".txt"
+    if os.path.exists(fit_results_file):
+        backup_path = "previous_fit_results/" + current_time + "/"
         Path(backup_path).mkdir(parents=True, exist_ok=True)
-        os.rename("fit_results.txt", backup_path + "fit_results " + current_time + ".txt")
 
+        if cluster:
+            for i in range(100):
+                if os.path.exists(fit_results_file):
+                    os.rename(fit_results_file, backup_path + "fit_results_" + str(job_index) + ".txt")
 
+            if os.path.exists("fit_results.txt"):
+                os.rename("fit_results.txt", backup_path + "fit_results " + current_time + ".txt")
 
+        else:
+            os.rename("fit_results.txt", backup_path + "fit_results " + current_time + ".txt")
+
+    current_time = datetime.now().isoformat()  # e.g., '2024-09-11T14:23:45.123456'
     val = {
-        'timestart': current_time,
+        'timestart':  current_time,
         'no_objects': len(object_ids),
     }
+
+    # Note we assume an existing tracker file here.
+    # If it doesn't exist, we will create a new one.
     edit_tracker('meta', val)
 
     # Append results to a file with safe access
@@ -254,12 +355,11 @@ if __name__ == "__main__":
 
 
     # # Create a pool of worker processes. Max number here is 24 at home.
-    num_cores_os = 30
+    num_cores_os = 10
 
     with Pool(processes=num_cores_os) as pool:
         # Run the scripts in parallel
         pool.map(run_script, zip(object_ids, tmass_ids, ages, masses, m_hs))
 
-    current_time = datetime.now().isoformat()  # e.g., '2024-09-11T14:23:45.123456'
     val['timestop'] = current_time
     edit_tracker('meta', val)

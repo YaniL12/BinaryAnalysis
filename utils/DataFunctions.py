@@ -160,7 +160,7 @@ def custom_split(line):
     
     return parts
 
-def read_binary_result_file(fn, coltype=0):
+def read_binary_result_file(fn, coltype=0, cols=None, ignore_header=False):
     """
     Reads a custom result file and returns a DataFrame.
 
@@ -177,66 +177,78 @@ def read_binary_result_file(fn, coltype=0):
 
 
 # 'f_contr': 0.5, 'mass_1': 0.888822, 'rv_1': 116.17699, 'vmic_1': 1.5, 'vsini_1': 4.0, 'mass_2': 0.888822, 'rv_2': 38.0, 'vmic_2': 1.5, 'vsini_2': 4.0, 'teff_1': 5.3533408203125, 'teff_2': 5.3533408203125, 'logg_1': 4.327199, 'logg_2': 4.327199, 'logl_1': 0, 'logl_2': 0}
+    if cols is None:
+        if coltype == 0:
+            cols = [
+                'sobject_id',
+                'residual',
+                'rchi2',
+                'f_contr',
+                'mass_1',
+                'age_1',
+                # 'metallicity_1',
+                'rv_1',
+                'fe_h_1',
+                'vmic_1',
+                'vsini_1',
+                'mass_2',
+                'age_2',
+                # 'metallicity_2',
+                'rv_2',
+                'fe_h_2',
+                'vmic_2',
+                'vsini_2',
+                'teff_1',
+                'teff_2',
+                'logg_1',
+                'logg_2',
+                'logl_1',
+                'logl_2'
+            ]
+        elif coltype == 1:
+            cols = [
+                'sobject_id',
+                'residual',
+                'rchi2',
+                'f_contr',
+                'mass_1',
+                'rv_1',
+                'vmic_1',
+                'vsini_1',
+                'mass_2',
+                'rv_2',
+                'vmic_2',
+                'vsini_2',
+                'teff_1',
+                'teff_2',
+                'logg_1',
+                'logg_2',
+                'logl_1',
+                'logl_2',
+                'age_1',
+                'age_2',
+                'FeH_1',
+                'FeH_2'
+            ]
+        elif coltype ==2:
+            # Equal FeH and age
+            cols = ['sobject_id', 'residual', 'rchi2', 'f_contr', 'mass_1', 'rv_1', 'vmic_1', 'vsini_1', 'mass_2', 'rv_2', 'vmic_2', 'vsini_2', 'FeH', 'age', 'teff_1', 'teff_2', 'logg_1', 'logg_2', 'logl_1', 'logl_2']
+        else:
+            cols = ['sobject_id', 'residual', 'rchi2', 'f_contr', 'mass_1', 'age_1', 'metallicity_1', 'rv_1', 'fe_h_1', 'vmic_1', 'vsini_1', 'teff_1', 'logg_1', 'logl_1', 'mass_2', 'age_2', 'metallicity_2', 'rv_2', 'fe_h_2', 'vmic_2', 'vsini_2', 'teff_2', 'logg_2', 'logl_2']
 
-    if coltype == 0:
-        cols = [
-            'sobject_id',
-            'residual',
-            'rchi2',
-            'f_contr',
-            'mass_1',
-            'age_1',
-            # 'metallicity_1',
-            'rv_1',
-            'fe_h_1',
-            'vmic_1',
-            'vsini_1',
-            'mass_2',
-            'age_2',
-            # 'metallicity_2',
-            'rv_2',
-            'fe_h_2',
-            'vmic_2',
-            'vsini_2',
-            'teff_1',
-            'teff_2',
-            'logg_1',
-            'logg_2',
-            'logl_1',
-            'logl_2'
-        ]
-    elif coltype == 1:
-        cols = [
-            'sobject_id',
-            'residual',
-            'rchi2',
-            'f_contr',
-            'mass_1',
-            'rv_1',
-            'vmic_1',
-            'vsini_1',
-            'mass_2',
-            'rv_2',
-            'vmic_2',
-            'vsini_2',
-            'teff_1',
-            'teff_2',
-            'logg_1',
-            'logg_2',
-            'logl_1',
-            'logl_2',
-            'age_1',
-            'age_2',
-            'FeH_1',
-            'FeH_2'
-        ]
-    else:
-        cols = ['sobject_id', 'residual', 'rchi2', 'f_contr', 'mass_1', 'age_1', 'metallicity_1', 'rv_1', 'fe_h_1', 'vmic_1', 'vsini_1', 'teff_1', 'logg_1', 'logl_1', 'mass_2', 'age_2', 'metallicity_2', 'rv_2', 'fe_h_2', 'vmic_2', 'vsini_2', 'teff_2', 'logg_2', 'logl_2']
 
     # Convert the data to a pandas DataFrame
-    data = pd.DataFrame(data, columns=cols)
+    if ignore_header:
+        data = pd.DataFrame(data[1:], columns=cols)
+    else:
+        data = pd.DataFrame(data, columns=cols)
+
     # Remove rows with None or NaN in 'age_1' column
-    data = data.dropna(subset=['age_1'])
+    if coltype == 2:
+        data = data.dropna(subset=['age'])
+    else:
+        data = data.dropna(subset=['age_1'])
+
     # Convert all columns except the first one to float
     data.iloc[:, 0] = data.iloc[:, 0].astype(int)
     data.iloc[:, 1:] = data.iloc[:, 1:].astype(float)

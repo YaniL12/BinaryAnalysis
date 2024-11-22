@@ -64,7 +64,7 @@ def fit_model(sobject_id):
     if spectrum == False:
         return
 
-    same_fe_h = False
+    # same_fe_h = False
 
     try:
         single_results = Table.read('/avatar/buder/GALAH_DR4/analysis_products_single/'+str(sobject_id)[:6]+'/'+str(sobject_id)+'/'+str(sobject_id)+'_single_fit_results.fits')
@@ -74,30 +74,45 @@ def fit_model(sobject_id):
 
     # model = StellarModel(labels = ['teff', 'logg', 'rv', 'fe_h', 'vmic', 'vsini']) # Model with no interpolation
     # model = StellarModel(id=sobject_id, labels = ['mass', 'age', 'metallicity', 'rv', 'fe_h', 'vmic', 'vsini'], interpolator=isochrone_interpolator, interpolate_flux=True) # Flux can be used as a free parameter (False) or can be determined from luminosity ratios (from the isochrone) (True)
+    
+    
+    # Use same FeH and age for both components
     model = StellarModel(
                 id=sobject_id, 
                 labels = ['mass', 'rv', 'vmic', 'vsini'], 
-                fixed_labels=['age', 'FeH'], # These are set as paramaters but not model labels
+                # fixed_labels=['FeH'], # These are parameters that exist, but we don't fit for. They are used as is or are outputs of the interpolation?
+                single_labels=['FeH', 'age'], # These are parameters that are the same for both components
                 interpolator=isochrone_interpolator, 
-                interpolate_flux=True
+                interpolate_flux=True,
+                same_fe_h=True
             ) # Flux can be used as a free parameter (False) or can be determined from luminosity ratios (from the isochrone) (True)
 
+    # # Use different FeH for each component and allow age to vary
+    # model = StellarModel(
+    #             id=sobject_id, 
+    #             labels = ['mass', 'rv', 'vmic', 'vsini', 'FeH', 'age'], 
+    #             # fixed_labels=['FeH'], # These are parameters that exist, but we don't fit for. They are used as is or are outputs of the interpolation?
+    #             # single_labels=['FeH', 'age'], # These are parameters that are the same for both components
+    #             interpolator=isochrone_interpolator, 
+    #             interpolate_flux=True,
+    #             same_fe_h=False
+    #         ) # Flux can be used as a free parameter (False) or can be determined from luminosity ratios (from the isochrone) (True)
 
     model.bounds['f_contr'] = (0, 1)
 
     # Same bounds for both components. Overwrite with model.bounds['rv_1'] == x if required
     model.set_bounds('teff', (3, 8))
     model.set_bounds('logg', (0.0, 5.0))
-    # model.set_bounds('FeH', (-4.0, 1.0))
     model.set_bounds('vmic', (0, 4))
     model.set_bounds('vsini', (0, 30))
 
     age_min = (10**isochrone_table['logAge'].min()) / 1e9
     age_max = (10**isochrone_table['logAge'].max()) / 1e9
 
-    # model.set_bounds('age', (age_min, age_max))
+    model.set_bounds('FeH', (-4.0, 1.0))
+    model.set_bounds('age', (age_min, age_max))
     model.set_bounds('mass', (isochrone_table['mass'].min(), isochrone_table['mass'].max()))
-    # model.set_bounds('FeH', (isochrone_table['m_h'].min(), isochrone_table['m_h'].max()))
+    # model.set_bounds('metallicity', (isochrone_table['m_h'].min(), isochrone_table['m_h'].max()))
     model.set_bounds('logL', (isochrone_table['logL'].min(), isochrone_table['logL'].max()))
 
     model.params['f_contr'] = 0.5
@@ -115,21 +130,14 @@ def fit_model(sobject_id):
 
     model.set_param('teff', single_results['teff'][0]/1000.)
     model.set_param('logg', single_results['logg'][0])
+
+    # Set the parameters required for the interpolation
+    model.set_param('age', float(sys.argv[3]))
     model.set_param('mass', float(sys.argv[4]))
+    model.set_param('FeH', float(sys.argv[5]))
+
     model.set_param('vmic', 1.5)
     model.set_param('vsini', 4.0)
-
-    model.add_param('age', np.clip(float(sys.argv[3]), age_min, age_max))
-    model.add_param('FeH', float(sys.argv[5])) # Approximate m_h as fe_h
-
-    # model.set_param('age', float(sys.argv[3]))
-    # model.set_param('FeH', float(sys.argv[5])) # Approximate m_h as fe_h
-
-    # model.set_bounds('age', (age_min, age_max))
-    # model.set_bounds('mass', (isochrone_table['mass'].min(), isochrone_table['mass'].max()))
-    # model.set_bounds('FeH', (isochrone_table['m_h'].min(), isochrone_table['m_h'].max()))
-
-    # model.set_param('fe_h', single_results['fe_h'][0])
 
     af.load_neural_network(spectrum)
     af.set_iterations(0)
@@ -155,7 +163,7 @@ def fit_model(sobject_id):
     else:
         print("Length of parameters and bounds match", len(model.get_params(values_only=True, exclude_fixed=True)), len(model.bounds))
 
-    wave_init, data_init, sigma2_init, model_init, unmasked_init = af.return_wave_data_sigma_model(model, spectrum, same_fe_h)
+    wave_init, data_init, sigma2_init, model_init, unmasked_init = af.return_wave_data_sigma_model(model, spectrum, model.same_fe_h)
     unmasked = unmasked_init
 
     # Produce a plot with the initial parameters
@@ -172,7 +180,7 @@ def fit_model(sobject_id):
         model_parameters = denormalize_parameters(normalized_params, model.get_bounds(type='tuple'))
 
         # Calculate the model flux using the current parameters
-        model_flux = af.get_flux_only(wave_init, model, spectrum, same_fe_h, unmasked, *model_parameters, plot=False)
+        model_flux = af.get_flux_only(wave_init, model, spectrum, model.same_fe_h, unmasked, *model_parameters, plot=False)
         
         # Need to generate a model with the current parameters to determine residual
         model.generate_model(spectrum)
@@ -189,7 +197,7 @@ def fit_model(sobject_id):
     kwargs={'maxfev':20000,'xtol':1e-5, 'gtol':1e-5, 'ftol':1e-5}
     model_parameters_iter1, covariances_iter1 = curve_fit(
         lambda wave_init, 
-            *model_parameters: af.get_flux_only(wave_init, model, spectrum, same_fe_h, unmasked, *model_parameters, plot=True),
+            *model_parameters: af.get_flux_only(wave_init, model, spectrum, model.same_fe_h, unmasked, *model_parameters, plot=True),
         wave_init[unmasked_init],
         data_init[unmasked_init],
         p0=model.get_params(values_only=True, exclude_fixed=True),
@@ -249,7 +257,11 @@ def fit_model(sobject_id):
         debug=True            # Set to True for detailed logging
     )
 
+    final_params = denormalize_parameters(best_params, model.get_bounds(type='tuple'))
 
+    for i, param in enumerate(model.get_params(values_only=False)):
+        model.params[param] = final_params[i]
+        
     params = model.get_params(values_only=True)
     params_list = ', '.join(map(str, params))
     print(model.get_residual(), model.get_rchi2(), params_list)

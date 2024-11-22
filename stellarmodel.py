@@ -70,7 +70,8 @@ class StellarModel:
                 self.add_param('logg', 0)
                 self.add_param('logl', 0)
 
-            elif all(label in self.unique_labels for label in ['mass', 'age']) and all(label in self.fixed_labels for label in ['FeH']):
+            # elif all(label in self.unique_labels for label in ['mass', 'age']) and all(label in self.fixed_labels for label in ['FeH']):
+            elif all(label in self.unique_labels for label in ['mass', 'age', 'FeH']):
                 self.add_param('teff', 0)
                 self.add_param('logg', 0)
                 self.add_param('logl', 0)
@@ -320,6 +321,9 @@ class StellarModel:
                 plot_lines = [important_lines[i] for i in random_indices]
             else:
                 plot_lines = important_lines[0:no_lines]
+                # Remove line at index 2
+                plot_lines.pop(2)
+                plot_lines.append(important_lines[no_lines+1])
 
             no_plots = no_lines # How many lines to show from important lines
         else:
@@ -468,9 +472,9 @@ class StellarModel:
                         # "   age$_2$: " + str(round(self.params["age_2"], 4)) + \
                         # "   metallicity$_2$: " + str(round(self.params["FeH_2"], 4))
 
-            # fig.text(x_start - 0.12, -0.2, "Flux Ratio: " + str(round(self.params["f_contr"], 4)), ha='center', va='center', fontsize=18)
-            # fig.text(x_start + 0.12, -0.15, annotation1, ha='center', va='center', fontsize=18)
-            # fig.text(x_start + 0.12, -0.25, annotation2, ha='center', va='center', fontsize=18)
+                # fig.text(x_start - 0.12, -0.2, "Flux Ratio: " + str(round(self.params["f_contr"], 4)), ha='center', va='center', fontsize=18)
+                fig.text(x_start + 0.12, -0.15, annotation1, ha='center', va='center', fontsize=18)
+                fig.text(x_start + 0.12, -0.25, annotation2, ha='center', va='center', fontsize=18)
             fig.text(0.05, 0, f'$RV_1$: {round(self.params["rv_1"], )} km/s', color='r', bbox=dict(facecolor='white', edgecolor='none', boxstyle='round, pad=0.3'))
             fig.text(0.05, -0.05, f'$RV_2$: {round(self.params["rv_2"], )} km/s', color='blue', bbox=dict(facecolor='white', edgecolor='none', boxstyle='round, pad=0.3'))
 
@@ -488,5 +492,22 @@ class StellarModel:
                 #     f.write(f"{self.id}, {self.get_residual()}, {self.get_rchi2()}, {params_list}\n")
 
 
+        else:
+            print('No data to plot')
+
+    def plot_residual(self, title_text="", show_plot=True):
+        if self.wavelengths.size > 0 and self.flux.size > 0 and self.model_flux.size > 0:
+            fig, ax = plt.subplots(figsize=(20, 5))
+            ax.plot(self.wavelengths, self.flux - self.model_flux, label='Residual')
+            ax.fill_between(self.wavelengths, 0, self.flux - self.model_flux, color='gray', alpha=0.3)
+            ax.set_xlabel('Wavelength (Å)')
+            ax.set_ylabel('Residual')
+            ax.set_title('Residual Plot ' + title_text)
+            plt.legend()
+            if show_plot:
+                plt.show()
+            else:
+                plt.savefig(f'plots/2/residual_{title_text}.png')
+                plt.close()
         else:
             print('No data to plot')
