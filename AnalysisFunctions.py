@@ -33,24 +33,56 @@ os.chdir(working_directory)
 
 galah_dr4_directory = '/avatar/buder/GALAH_DR4/'
 
-def load_isochrones():
+renormalisation_fit_0 = None
+spectrum_0 = [None] * 5
+
+def load_isochrones(type='', extended=False):
     global isochrone_interpolator
     working_directory = '/avatar/yanilach/PhD-Home/binaries_galah-main/spectrum_analysis/BinaryAnalysis/'
 
-    # print(working_directory)
-    if os.path.exists(working_directory + '/assets/parsec_interpolator.pkl'):
-        with open(working_directory + '/assets/parsec_interpolator.pkl', 'rb') as f:
-            isochrone_interpolator = pickle.load(f)
-            return isochrone_interpolator
-
+    if extended:
+        fn = 'parsec_interpolator_extended.pkl'
+    elif type == 'trilinear':
+        fn = 'parsec_isochrones_reduced.fits'
     else:
-        print("No isochrone interpolator found. Creating interpolator - this could take a while (20-40m).")
-        # print(working_directory)
-        # isochrone_table = Table.read(working_directory + 'assets/parsec_isochrones_logt_8p00_0p01_10p17_mh_m2p75_0p25_m0p75_mh_m0p60_0p10_0p70_GaiaEDR3_2MASS.fits')
-        isochrone_table = Table.read('/avatar/yanilach/PhD-Home/binaries_galah-main/spectrum_analysis/BinaryAnalysis/assets/parsec_isochrones_logt_8p00_0p01_10p17_mh_m2p75_0p25_m0p75_mh_m0p60_0p10_0p70_GaiaEDR3_2MASS.fits')
+        fn = 'parsec_interpolator_old.pkl'
 
-        parsec_points = np.array([isochrone_table['mass'], isochrone_table['logAge'], isochrone_table['m_h']]).T
-        parsec_values_lite = np.array([isochrone_table['logT'], isochrone_table['logg'], isochrone_table['logL']]).T
+    # print(working_directory)
+    if os.path.exists(working_directory + 'assets/' + fn):
+
+        print("Isochrone interpolator found. Loading from file.")
+        if type == 'trilinear':
+            print("Loading tri-linear interpolator.")
+            isochrone_interpolator = Table.read(working_directory + 'assets/' + fn)
+        else:
+            print("Loading NDlinear interpolator.")
+            with open(working_directory + 'assets/' + fn, 'rb') as f:
+                isochrone_interpolator = pickle.load(f)
+
+        return isochrone_interpolator
+
+        # print(parsec_points[0])
+        # print(parsec_values_lite[0])
+
+    elif type != 'trilinear':
+        print("No isochrone interpolator found. Creating interpolator - this could take a while (20-40m).")
+        if not extended:
+            print("Loading file: ", working_directory + 'assets/parsec_isochrones_logt_8p00_0p01_10p17_mh_m2p75_0p25_m0p75_mh_m0p60_0p10_0p70_GaiaEDR3_2MASS.fits')
+            isochrone_table = Table.read('/avatar/yanilach/PhD-Home/binaries_galah-main/spectrum_analysis/BinaryAnalysis/assets/parsec_isochrones_logt_8p00_0p01_10p17_mh_m2p75_0p25_m0p75_mh_m0p60_0p10_0p70_GaiaEDR3_2MASS.fits')
+  
+
+        if extended:
+            print("Loading file: ", working_directory + 'assets/parsec_isochrones_extended.fits')
+            isochrone_table = Table.read(working_directory + 'assets/parsec_isochrones_extended.fits')
+
+        if not extended:
+            parsec_points = np.array([isochrone_table['mass'], isochrone_table['logAge'], isochrone_table['m_h']]).T
+            parsec_values_lite = np.array([isochrone_table['logT'], isochrone_table['logg'], isochrone_table['logL']]).T
+        else:
+            print("Using initial mass, logAge, and m_h")
+            parsec_points = np.array([isochrone_table['mini'], isochrone_table['logAge'], isochrone_table['m_h']]).T
+            parsec_values_lite = np.array([isochrone_table['logT'], isochrone_table['logg'], isochrone_table['logL']]).T
+            
 
         isochrone_interpolator = LinearNDInterpolator(
             parsec_points,
@@ -59,33 +91,88 @@ def load_isochrones():
 
         print("Isochrone interpolator created. Saving to file.")
 
-        with open(working_directory + 'assets/parsec_interpolator.pkl', 'wb') as f:
+        with open(working_directory + 'assets/' + fn, 'wb') as f:
             pickle.dump(isochrone_interpolator, f)
 
-        with open('/assets/parsec_interpolator.pkl', 'rb') as f:
+        with open('assets/' + fn, 'rb') as f:
             isochrone_interpolator = pickle.load(f)
 
         return isochrone_interpolator
+    
+    else:
+        print("No file found for trilinear interpolation.")
+        return None
 
 
 # This is for printing only. The model has it's own code.
-def interpolate_isochrone(mass, age, m_h):
+def interpolate_isochrone(mass, age, m_h, int_type='trilinear'):
     """
     Input mass, age, and metallicity. Outputs Teff, logg, and logL
     # mass: mass of the star in solar masses
-    # age: age of the star in GYR
+    # age: age of the star in log GYR
     # m_h: metallicity of the star in [Fe/H]
+
+    Outputs are:
+    # Teff: effective temperature of the star in K
+    # logg: surface gravity of the star in log cm/s^2
+    # logL: luminosity of the star in log solar luminosities
+
     """
     global isochrone_interpolator
 
     if not isochrone_interpolator:
-        isochrone_interpolator = load_isochrones()
+        isochrone_interpolator = load_isochrones(type=int_type)
 
-    teff, logg, logl = isochrone_interpolator(
-        mass, 
-        np.log10(age * 1e9), # Accepts log age (GYR)
-        m_h
-    )
+
+    if type(isochrone_interpolator) == Table:
+        try:
+            # Assume correct units are passed in.
+            age_0, age_1 = find_closest_values(isochrone_interpolator['logAge'], age)
+            m_h_0, m_h_1 = find_closest_values(isochrone_interpolator['m_h'], m_h)
+
+
+            # print("Age range: ", isochrone_interpolator['logAge'][age_0], isochrone_interpolator['logAge'][age_1])
+            # print("Metallicity range: ", isochrone_interpolator['m_h'][m_h_0])
+            # print("Metallicity range end: ", isochrone_interpolator['m_h'][m_h_1])
+
+            table_region = isochrone_interpolator[
+                (isochrone_interpolator['logAge'] >= isochrone_interpolator[age_0]['logAge']) & 
+                (isochrone_interpolator['logAge'] <= isochrone_interpolator[age_1]['logAge']) & 
+                (isochrone_interpolator['m_h'] >= isochrone_interpolator[m_h_0]['m_h']) & 
+                (isochrone_interpolator['m_h'] <= isochrone_interpolator[m_h_1]['m_h']) & 
+                (isochrone_interpolator['mini'] >= mass - 0.2) & 
+                (isochrone_interpolator['mini'] <= mass + 0.2)
+            ]
+
+            # Prepare input and output for interpolation
+            points = np.vstack([table_region['logAge'], table_region['m_h'], table_region['mini']]).T
+            values = np.vstack([table_region['logT'], table_region['logg'], table_region['logL']]).T  # 3-column output
+
+            interp = LinearNDInterpolator(points, values)
+
+            # Perform interpolation at query point
+            query_point = np.array([age, m_h, mass])
+
+            teff, logg, logl = interp(query_point)[0]
+        
+        except:
+            print("Error in interpolation.")
+            print("Recieved values: ", mass, age, m_h)
+            interpolated = {
+                'teff': 0,
+                'logg': 0,
+                'logl': 0
+            }
+            return interpolated
+
+    else:
+
+        teff, logg, logl = isochrone_interpolator(
+            mass, 
+            # np.log10(age * 1e9), # Accepts log age (GYR)  * 1e9
+            age,
+            m_h
+        )
     
     interpolated = {
         'teff': 10 ** teff,
@@ -95,14 +182,38 @@ def interpolate_isochrone(mass, age, m_h):
 
     return interpolated
 
-def load_neural_network(spectrum):
+def find_closest_values(arr, value):
+    arr = np.array(arr)
+
+    # Get sorted indices
+    sorted_indices = np.argsort(arr)
+    sorted_arr = arr[sorted_indices]
+
+    # Find index in the sorted array
+    idx = np.searchsorted(sorted_arr, value, side='left')
+    higher_idx = np.searchsorted(sorted_arr, value, side='right')
+
+    # Get the closest lower and higher indices in the sorted array
+    lower_idx = sorted_indices[idx - 1] if idx > 0 else None
+    higher_idx = sorted_indices[higher_idx] if higher_idx < len(arr) else None
+
+    # Get highest and lowest values
+    indeces = np.array([lower_idx, higher_idx])
+    
+
+    return indeces
+
+
+def load_neural_network(spectrum, target_res=-1.):
     global model_name, default_wave_dir, default_model_wave, initial_l, model_components
 
     # Read in neural network
     model_name = '/avatar/yanilach/PhD-Home/binaries_galah-main/spectrum_modelling/galah_parameter_nn_300_neurons_0p0001_lrate_128_batchsize_model.npz'
     default_wave_dir = '/avatar/yanilach/PhD-Home/binaries_galah-main/spectrum_modelling/galah_parameter_nn_wavelength.txt'
     default_model_wave = np.loadtxt(default_wave_dir, dtype=float)
-    initial_l = calculate_default_degrading_wavelength_grid(default_model_wave, spectrum)
+
+    # Requires a GALAH based spectrum
+    initial_l = calculate_default_degrading_wavelength_grid(default_model_wave, spectrum, target_res=-1.)
 
     tmp = np.load(model_name)
     w_array_0 = tmp["w_array_0"]
@@ -519,68 +630,135 @@ def sclip(p,fit,n,ye=[],sl=99999,su=99999,min=0,max=0,min_data=1,grow=0,global_m
     return f,tmp_results,b
 
 # %%
-def calculate_default_degrading_wavelength_grid(default_model_wave, spectrum, synth_res=300000.):
+def calculate_default_degrading_wavelength_grid(default_model_wave, spectrum, synth_res=300000., target_res=-1.):
     initial_l = dict()
     
-    for ccd in spectrum['available_ccds']:
+    # Check if the available_ccds key is present in the spectrum dictionary
+    
+    """
+    GENERAL SPECTRUM ANALYSIS
+    If we don't have multiple CCDS, assume we are just fitting a single spectrum with flux and wavelength only.
+    """
+    if 'available_ccds' not in spectrum:
 
-        wave_model_ccd = (default_model_wave > (3+ccd)*1000) & (default_model_wave < (4+ccd)*1000)
+        if target_res == -1:
+            logging.error('Target resolving power must be specified for generalised analysis.')
+            return()
 
-        synth = np.array(default_model_wave[wave_model_ccd]).T
+        # Extract the wavelength range from the spectrum
+        wavelength_range = spectrum['wave'].values  # Assuming this is a NumPy array!
+        cdelt = np.mean(np.diff(wavelength_range))  # Average sampling interval
 
-        l_original=synth
-        #check if the shape of the synthetic spectrum is correct
-        #if synth.shape[1]!=2: logging.error('Syntehtic spectrum must have shape m x 2.')
+        print('Wavelength range:')
+        print(wavelength_range)
 
-        #check if the resolving power is high enough
-        sigma_synth=synth/synth_res
-        if max(sigma_synth)>=min(spectrum['lsf_ccd'+str(ccd)])*0.95:
+        # Select the relevant range from the synthetic model
+        wave_model_range = (default_model_wave > wavelength_range[0]) & (default_model_wave < wavelength_range[-1])
+        synth = np.array(default_model_wave[wave_model_range]).T
+
+        # Original resolving power sigma
+        sigma_synth = synth / synth_res
+
+        # Target resolving power sigma (assume constant)
+        sigma_target = synth / target_res
+
+        # Check that the synthetic spectrum has sufficient resolving power
+        if max(sigma_synth) >= min(sigma_target) * 0.95:
             logging.error('Resolving power of the synthetic spectrum must be higher.')
-
-            if os.path.exists(pending_path):
-                os.remove(pending_path)
-                print(f"File '{pending_path}' deleted successfully. No CCDs available, incomplete.")
-
-            with open(failed_path + str('_resolving_power'), 'w') as f:
-                pass  # No need to write anything; file will be created empty
-
             exit()
 
-        #check if wavelength calibration of the synthetic spectrum is linear:
-        if not (synth[1]-synth[0])==(synth[-1]-synth[-2]):
-            logging.error('Synthetic spectrum must have linear (equidistant) sampling.')		
+        # Check if wavelength sampling is linear
+        if not np.allclose(np.diff(synth), np.diff(synth)[0]):
+            logging.error('Synthetic spectrum must have linear (equidistant) sampling.')
+            exit()
 
-        #current sampling:
-        sampl=synth[1]-synth[0]
-        galah_sampl=spectrum['cdelt_ccd'+str(ccd)]
+        # Current sampling
+        sampl = synth[1] - synth[0]
 
-        #original sigma
-        s_original=sigma_synth
+        # Kernel sigma for resolution degradation
+        s = np.sqrt(sigma_target**2 - sigma_synth**2)
 
-        #required sigma (resample the resolution map into the wavelength range of the synthetic spectrum)
-        s_out=np.interp(synth, spectrum['crval_ccd'+str(ccd)]+spectrum['cdelt_ccd'+str(ccd)]*np.arange(len(spectrum['counts_ccd'+str(ccd)])), spectrum['lsf_ccd'+str(ccd)])
-        
-        #the sigma of the kernel is:
-        s=np.sqrt(s_out**2-s_original**2)
-        
-        #fit it with the polynomial, so we have a function instead of sampled values:
-        map_fit=np.poly1d(np.polyfit(synth, s, deg=6))
+        # Fit the kernel sigma with a polynomial
+        map_fit = np.poly1d(np.polyfit(synth, s, deg=6))
 
-        #create an array with new sampling. The first point is the same as in the spectrum:
-        l_new=[synth[0]]
+        # Create a new array with adjusted sampling
+        l_new = [synth[0]]
 
-        #oversampling. If synthetic spectrum sampling is much finer than the size of the kernel, the code would work, but would return badly sampled spectrum. this is because from here on the needed sampling is measured in units of sigma.
-        oversample=galah_sampl/sampl*10.0
+        # Oversampling factor
+        oversample = cdelt / sampl * 10.0
 
-        #minimal needed sampling
-        min_sampl=max(s_original)/sampl/sampl*oversample
-        
-        #keep adding samples until end of the wavelength range is reached
-        while l_new[-1]<synth[-1]+sampl:
-            # THIS IS THE BOTTLENECK OF THE COMPUTATION
-            l_new.append(l_new[-1]+map_fit(l_new[-1])/sampl/min_sampl)
+        # Minimum required sampling
+        min_sampl = max(s) / sampl / sampl * oversample
 
-        initial_l['ccd'+str(ccd)] = np.array(l_new)
+        # Iteratively add new wavelength points
+        while l_new[-1] < synth[-1] + sampl:
+            l_new.append(l_new[-1] + map_fit(l_new[-1]) / sampl / min_sampl)
+
+        # Store the result in the output dictionary
+        initial_l['full_spectrum'] = np.array(l_new)
+
+    else:
+        # Loop over the available CCDs
+        for ccd in spectrum['available_ccds']:
+
+            wave_model_ccd = (default_model_wave > (3+ccd)*1000) & (default_model_wave < (4+ccd)*1000)
+
+            synth = np.array(default_model_wave[wave_model_ccd]).T
+
+            l_original=synth
+            #check if the shape of the synthetic spectrum is correct
+            #if synth.shape[1]!=2: logging.error('Syntehtic spectrum must have shape m x 2.')
+
+            #check if the resolving power is high enough
+            sigma_synth=synth/synth_res
+            if max(sigma_synth)>=min(spectrum['lsf_ccd'+str(ccd)])*0.95:
+                logging.error('Resolving power of the synthetic spectrum must be higher.')
+
+                if os.path.exists(pending_path):
+                    os.remove(pending_path)
+                    print(f"File '{pending_path}' deleted successfully. No CCDs available, incomplete.")
+
+                with open(failed_path + str('_resolving_power'), 'w') as f:
+                    pass  # No need to write anything; file will be created empty
+
+                exit()
+
+            #check if wavelength calibration of the synthetic spectrum is linear:
+            if not (synth[1]-synth[0])==(synth[-1]-synth[-2]):
+                logging.error('Synthetic spectrum must have linear (equidistant) sampling.')		
+
+            #current sampling:
+            sampl=synth[1]-synth[0]
+            galah_sampl=spectrum['cdelt_ccd'+str(ccd)]
+
+            #original sigma
+            s_original=sigma_synth
+
+            #required sigma (resample the resolution map into the wavelength range of the synthetic spectrum)
+            s_out=np.interp(synth, spectrum['crval_ccd'+str(ccd)]+spectrum['cdelt_ccd'+str(ccd)]*np.arange(len(spectrum['counts_ccd'+str(ccd)])), spectrum['lsf_ccd'+str(ccd)])
+            
+            #the sigma of the kernel is:
+            s=np.sqrt(s_out**2-s_original**2)
+            
+            #fit it with the polynomial, so we have a function instead of sampled values:
+            map_fit=np.poly1d(np.polyfit(synth, s, deg=6))
+
+            #create an array with new sampling. The first point is the same as in the spectrum:
+            l_new=[synth[0]]
+
+            #oversampling. If synthetic spectrum sampling is much finer than the size of the kernel, the code would work, but would return badly sampled spectrum. this is because from here on the needed sampling is measured in units of sigma.
+            oversample=galah_sampl/sampl*10.0
+
+            #minimal needed sampling
+            min_sampl=max(s_original)/sampl/sampl*oversample
+            
+            #keep adding samples until end of the wavelength range is reached
+            while l_new[-1]<synth[-1]+sampl:
+                # THIS IS THE BOTTLENECK OF THE COMPUTATION
+                l_new.append(l_new[-1]+map_fit(l_new[-1])/sampl/min_sampl)
+
+            initial_l['ccd'+str(ccd)] = np.array(l_new)
+
     return(initial_l)
 
 
@@ -714,6 +892,8 @@ def rv_shift(rv_value, wavelength):
 def create_synthetic_binary_spectrum_at_observed_wavelength(model, spectrum, same_fe_h = True):
     # We use the binary model object to extract the parameters of the two components.
     # The model is updated here and in the get_flux_only call for curve fitting.
+    global renormalisation_fit_0
+    global spectrum_0
     
     model.interpolate()
     
@@ -735,11 +915,12 @@ def create_synthetic_binary_spectrum_at_observed_wavelength(model, spectrum, sam
     else:
         rv_2 = model.params['rv_2']    
 
-    # Manaully enforce bounds. Useful if we change optimisation algorithms, e.g. Nelder-Mead
-    
-    # for param, bounds in zip( model.get_params(),model.get_bounds(type='tuple')):
-    #     if model.params[param] < bounds[0] or model.params[param] > bounds[1]:
-    #         model.params[param] = np.clip(model.params[param], bounds[0], bounds[1])
+    # # Manaully enforce bounds. Useful if we change optimisation algorithms, e.g. Nelder-Mead
+    # if model.original_bounds is not None:
+    #     for param, bounds in zip( model.get_params(), model.original_bounds):
+    #         if model.params[param] < bounds[0] or model.params[param] > bounds[1]:
+    #             print(f"Parameter {param} out of bounds: {model.params[param]}. Clipping to {bounds[0]} and {bounds[1]}")
+    #             model.params[param] = np.clip(model.params[param], bounds[0], bounds[1])
 
 
     component_1_labels = model.get_unique_labels()
@@ -809,10 +990,21 @@ def create_synthetic_binary_spectrum_at_observed_wavelength(model, spectrum, sam
         
         # Combine the component models via weighting parameter q to get a model flux
         spectrum['flux_model_ccd'+str(ccd)] = f_contr * component_1_model_ccd_lsf_at_observed_wavelength + (1-f_contr) * component_2_model_ccd_lsf_at_observed_wavelength
-
         renormalisation_fit = sclip((spectrum['wave_ccd'+str(ccd)], spectrum['counts_ccd'+str(ccd)] / spectrum['flux_model_ccd'+str(ccd)]), chebyshev,int(3), ye=spectrum['counts_unc_ccd'+str(ccd)], su=5, sl=5, min_data=100, verbose=False)
+        
         spectrum['flux_obs_ccd'+str(ccd)] = spectrum['counts_ccd'+str(ccd)] / renormalisation_fit[0]
         spectrum['flux_obs_unc_ccd'+str(ccd)] = spectrum['counts_unc_ccd'+str(ccd)] / renormalisation_fit[0]
+
+        if (np.median(spectrum['flux_obs_ccd'+str(ccd)])) < 0.7:
+            if spectrum_0[ccd] is not None:
+                spectrum['flux_obs_ccd'+str(ccd)] = spectrum_0[ccd]
+            else:
+                print('Renormalisation failed for CCD: ' + str(ccd) + '! Median flux is below 70% of the original flux and no original normalisation available.')
+                print('Spectrum will likely be incorrect.')
+        else:
+            spectrum_0[ccd] = spectrum['flux_obs_ccd'+str(ccd)]
+
+
 
         # Optionally return the model fluxes for each component
         spectrum['flux_model_ccd'+str(ccd)+'_component_1'] = component_1_model_ccd_lsf_at_observed_wavelength

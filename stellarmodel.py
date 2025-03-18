@@ -9,7 +9,7 @@ class StellarModel:
     interpolator = None
 
     # Constructor with default labels and components. Override for custom labels and components
-    def __init__(self, id="No ID", labels = ['rv', 'teff', 'logg', 'FeH', 'vmic', 'vsini'], fixed_labels=[], single_labels=[], components = 2, same_fe_h=False, interpolator=None, interpolate_flux=False):
+    def __init__(self, id="No ID", labels = ['rv', 'teff', 'logg', 'FeH', 'vmic', 'vsini'], fixed_labels=[], single_labels=[], components = 2, same_fe_h=False, interpolator=None, interpolate_flux=False, original_bounds=None):
 
     # Dictionaries for labels, bounds, and initial values
     # These should be instance level variables not class level. Otherwise they will be shared between all instances.
@@ -22,6 +22,7 @@ class StellarModel:
         self.single_labels = single_labels
 
         self.bounds = {}
+        self.original_bounds = original_bounds
         self.params = {}
         self.indices = {}
         self.unique_indices = {}
@@ -32,8 +33,12 @@ class StellarModel:
 
         self.param_data = {}
 
+        self.isochrone_table = None
+
         # Should we use a simple flux model or determine flux ratios from interpolated luminosity?
         self.interpolate_flux = interpolate_flux
+        if interpolate_flux and interpolator is None:
+            raise ValueError("You have set interpolate_flux to True but have not provided an interpolator. Please provide an interpolator to use this feature.")
 
         self.fixed_labels = fixed_labels
 
@@ -94,12 +99,17 @@ class StellarModel:
         # Check if data is a DataFrame
         if type(data) is DataFrame:
             row = data[data['sobject_id'] == self.id]
+            if row.empty:
+                print("ID not found in data. Check the ID you passed matches the model ID")
+                return
             for col in data.columns:
                 # If col exists in the model.params, set the value
                 if col in self.get_labels():
                     self.params[col] = row[col].iloc[0]
 
+            
             spectrum = af.read_spectrum(self.id)
+            af.load_neural_network(spectrum)
             self.generate_model(spectrum)
 
         elif isinstance(data, Series):
@@ -110,12 +120,39 @@ class StellarModel:
                     self.params[col] = data[col]
             # print(self.params)
             spectrum = af.read_spectrum(self.id)
+            af.load_neural_network(spectrum)
             self.generate_model(spectrum)
 
+    # Call this if we have modified one or more parameters manually. This will update the model flux.
+    # Effectively a load data call, without loadiing paramaters.
+    def regenerate_spectrum(self):
+        spectrum = af.read_spectrum(self.id)
+        self.generate_model(spectrum)
+
     def interpolate(self):
-        if self.interpolator is not None:
-            # Accepts mass, log(age), metallicity.
-            # Outputs Teff, logg, and log(L) bolometric (flux)
+        # Accepts mass, log(age), metallicity.
+        # Outputs Teff, logg, and log(L) bolometric (flux)
+
+        if self.interpolator == 'trilinear':
+
+            age_query = np.log10(self.params['age'] * 1e9)
+            m_h_query = self.params['FeH']
+            mass_query_1 = self.params['mass_1'] - 0.1
+            mass_query_2 = self.params['mass_2'] - 0.1
+
+            interpolate_1 = af.interpolate_isochrone(mass_query_1, age_query, m_h_query)
+            interpolate_2 = af.interpolate_isochrone(mass_query_2, age_query, m_h_query)
+
+
+            self.params['teff_1'] = (interpolate_1['teff']) / 1000
+            self.params['logg_1'] = interpolate_1['logg']
+            self.params['logl_1'] = interpolate_1['logl']
+
+            self.params['teff_2'] = (interpolate_2['teff'])  / 1000
+            self.params['logg_2'] = interpolate_2['logg']
+            self.params['logl_2'] = interpolate_2['logl']
+
+        elif self.interpolator is not None:
 
             # if all(label in self.unique_labels for label in ['mass', 'age']) and all(label in self.fixed_labels for label in ['FeH']):
                 # Both components will have the same starting values.
@@ -145,26 +182,28 @@ class StellarModel:
             self.params['logg_2'] = interpolate_2[1]
             self.params['logl_2'] = interpolate_2[2]
 
-            # The optimiser has gone outside the bounds. Set parmaeters to unreasonable values. This should results in a high residual.
-            # Consider scaling parameters to prevent this in the optimiser (TODO)
-            if np.isnan(self.params['teff_1']) or np.isnan(self.params['teff_2']):
-                # print("Interpolated values are NaN. Check input values for interpolation")
-                self.params['teff_1'] = 0
-                self.params['teff_2'] = 0
-                self.params['logg_1'] = 0
-                self.params['logg_2'] = 0
-                self.params['logl_1'] = 0
-                self.params['logl_2'] = 0
-                # self.params['f_contr'] = 0.5
+        # The optimiser has gone outside the bounds. Set parmaeters to unreasonable values. This should results in a high residual.
+        # Consider scaling parameters to prevent this in the optimiser (TODO)
+        if np.any(np.isnan(self.params['teff_1'])) or np.any(np.isnan(self.params['teff_2'])):
+            # print("Interpolated values are NaN. Check input values for interpolation")
+            self.params['teff_1'] = 0
+            self.params['teff_2'] = 0
+            self.params['logg_1'] = 0
+            self.params['logg_2'] = 0
+            self.params['logl_1'] = 0
+            self.params['logl_2'] = 0
+            # self.params['f_contr'] = 0.5
 
-            if self.interpolate_flux:
-                f_1 = 10 ** self.params['logl_1']
-                f_2 = 10 ** self.params['logl_2']
-                flux_ratio = f_1 / (f_1 + f_2)
-                self.params['f_contr'] = flux_ratio
+        if self.interpolate_flux:
+            f_1 = 10 ** self.params['logl_1']
+            f_2 = 10 ** self.params['logl_2']
+            flux_ratio = f_1 / (f_1 + f_2)
+            self.params['f_contr'] = flux_ratio
 
             # else:
             #     print("Isochrone labels not found in model labels. Please add 'mass', 'age', and 'fe_h' to model labels for interpolation")
+
+
 
     # For single parameter retrieval (E.g. teff_1 not teff)
     def get_param(self, param):
@@ -277,14 +316,13 @@ class StellarModel:
             # This is an array of values.
             #  Model labels we are trying to fit
             fit_labels = [label for label in self.model_labels if label.split('_')[0] not in self.fixed_labels]
-            
-            # print(fit_labels, len(fit_labels))
-            # print(fit_labels, self.model_labels, self.fixed_labels)
 
             if len(fit_labels) == len(params):
                 for i, label in enumerate(fit_labels):
                     self.params[label] = params[i]
             else:
+                print(fit_labels, len(fit_labels))
+                print(fit_labels, params)
                 raise ValueError("Error: trying to set all parameters at once but the number of parameters does not match the number of labels in the model.")
 
     def add_param(self, param, value):
@@ -303,6 +341,11 @@ class StellarModel:
         return 100 * np.sum(abs(self.model_flux - self.flux)) / len(self.flux)
     
     def get_rchi2(self):
+        # Manual bound checking for interpolated values
+        # print(self.params['f_contr'], self.bounds['f_contr'])
+        if self.params['f_contr'] > self.bounds['f_contr'][1] or self.params['f_contr'] < self.bounds['f_contr'][0]:
+            return 1e10
+
         return np.sum((self.model_flux - self.flux) ** 2) / (len(self.flux) - len(self.params))
 
     def plot(self, title_text="", lines=None, line_buffer=10, no_lines=5, random_lines=False, component_fluxes=False, component_offset=0, vlines=True, show_plot=True):
@@ -472,7 +515,7 @@ class StellarModel:
                         # "   age$_2$: " + str(round(self.params["age_2"], 4)) + \
                         # "   metallicity$_2$: " + str(round(self.params["FeH_2"], 4))
 
-                # fig.text(x_start - 0.12, -0.2, "Flux Ratio: " + str(round(self.params["f_contr"], 4)), ha='center', va='center', fontsize=18)
+                fig.text(x_start - 0.12, -0.2, "Flux Ratio: " + str(round(self.params["f_contr"], 4)), ha='center', va='center', fontsize=18)
                 fig.text(x_start + 0.12, -0.15, annotation1, ha='center', va='center', fontsize=18)
                 fig.text(x_start + 0.12, -0.25, annotation2, ha='center', va='center', fontsize=18)
             fig.text(0.05, 0, f'$RV_1$: {round(self.params["rv_1"], )} km/s', color='r', bbox=dict(facecolor='white', edgecolor='none', boxstyle='round, pad=0.3'))
@@ -511,3 +554,36 @@ class StellarModel:
                 plt.close()
         else:
             print('No data to plot')
+
+    def plot_hr(self, background_data):
+        GALAH_data = background_data
+
+        plt.figure(figsize=(15, 7))
+        cleaned_data = GALAH_data[['teff', 'logg']].replace([np.inf, -np.inf], np.nan).dropna()
+
+        # Plot the 2D histogram
+        plt.hexbin(cleaned_data['teff'], cleaned_data['logg'], gridsize=100, cmap='gray_r', alpha=0.5)
+
+
+        # Select the sample stars in the galah data and show in blue
+        unresolved = GALAH_data[GALAH_data['sobject_id'] == self.id]
+        plt.scatter(unresolved['teff'], unresolved['logg'], alpha=0.5, color='blue', s=25, label='Unresolved')
+        
+        # plt.scatter(sample['teff_1'] * 1e3, sample['logg_1'], alpha=0.5, color='red', s=1, label='Primary')
+        # plt.scatter(sample['teff_2'] * 1e3, sample['logg_2'], alpha=0.5, color='green', s=1, label='Secondary')
+
+        # plt.
+
+        plt.rcParams.update({'font.size': 20})
+        plt.xlabel('teff')
+        plt.ylabel('logg')
+        plt.ylim(-1, 5)
+        plt.legend()
+        plt.gca().invert_xaxis()
+        plt.gca().invert_yaxis()
+        plt.xlim(8000, 3000)
+        plt.tight_layout()
+
+        plt.show()
+
+    

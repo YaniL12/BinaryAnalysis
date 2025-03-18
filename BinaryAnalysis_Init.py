@@ -36,13 +36,14 @@ from filelock import FileLock
 
 sys.path.append(os.path.join(working_directory, 'utils'))
 import AstroPandas as ap
+import DataFunctions as df
 
 import stellarmodel
 from stellarmodel import StellarModel
 
 # Accepts mass, log(age), metallicity. Outputs Teff, logg, and log(L) bolometric (flux)
 isochrone_table = Table.read(working_directory +  '/assets/parsec_isochrones_logt_8p00_0p01_10p17_mh_m2p75_0p25_m0p75_mh_m0p60_0p10_0p70_GaiaEDR3_2MASS.fits')
-isochrone_interpolator = af.load_isochrones()
+isochrone_interpolator = af.load_isochrones(type='trilinear')
 
 tracker_path = '/home/yanilach/public_html/avatar-tracker/tracking_files/'
 tracking_file = ""
@@ -246,21 +247,22 @@ if __name__ == "__main__":
 
    # Table data
     GALAH_DR4_dir = '/avatar/buder/GALAH_DR4/'
-    GALAH_DR4 = ap.FitsToDF(GALAH_DR4_dir + "catalogs/galah_dr4_allspec_240207.fits")
+    GALAH_DR4 = df.FitsToDF(GALAH_DR4_dir + "catalogs/galah_dr4_allspec_240207.fits")
 
     # Accepts mass, log(age), metallicity. Outputs Teff, logg, and log(L) bolometric (flux)
     isochrone_table = Table.read(working_directory +  '/assets/parsec_isochrones_logt_8p00_0p01_10p17_mh_m2p75_0p25_m0p75_mh_m0p60_0p10_0p70_GaiaEDR3_2MASS.fits')
-    isochrone_interpolator = af.load_isochrones()
+    isochrone_interpolator = af.load_isochrones(type='trilinear')
 
     # Results from CCF
     # results_text = pd.read_csv("/avatar/yanilach/PhD-Home/binaries_galah-main/spectrum_analysis" + "/CCF_results.txt", sep='\t', names=["sobject_id", "no_peaks", "RVs"])
     # results_text['index'] = results_text.index
 
     # Get all stars in GALAH DR4 where the sobject_id is in obvious_binaries array
-    obvious_binaries = pd.read_csv(working_directory + "obvious_binaries.csv")
+    # obvious_binaries = pd.read_csv(working_directory + "obvious_binaries.csv")
+    sample_selection = pd.read_csv(working_directory + "/sample_selection.csv")
 
     # Check the star has a valid rv_2 value
-    binary_stars = GALAH_DR4[GALAH_DR4['sobject_id'].isin(obvious_binaries['0'].values)]
+    binary_stars = GALAH_DR4[GALAH_DR4['sobject_id'].isin(sample_selection['sobject_id'].values)]
 
     # Get the row where the object ID is 131216001101026
     # TESTING
@@ -355,6 +357,7 @@ if __name__ == "__main__":
 
 
     # # Create a pool of worker processes. Max number here is 24 at home.
+    # Check this matches the PBS script. DO NOT MODIFY unless you know what you are doing.
     num_cores_os = 10
 
     with Pool(processes=num_cores_os) as pool:
