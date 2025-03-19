@@ -3,6 +3,7 @@ import matplotlib.pyplot as plt
 import AnalysisFunctions as af
 from pandas import DataFrame
 from pandas import Series as Series
+import time
 important_lines, important_molecules = af.load_dr3_lines()
 
 class StellarModel:
@@ -133,7 +134,10 @@ class StellarModel:
         # Accepts mass, log(age), metallicity.
         # Outputs Teff, logg, and log(L) bolometric (flux)
 
+        # start_time = time.time()
+        
         if self.interpolator == 'trilinear':
+            # print("Trilinear interpolation.")
 
             age_query = np.log10(self.params['age'] * 1e9)
             m_h_query = self.params['FeH']
@@ -153,6 +157,7 @@ class StellarModel:
             self.params['logl_2'] = interpolate_2['logl']
 
         elif self.interpolator is not None:
+            # print("Cached interpolation.")
 
             # if all(label in self.unique_labels for label in ['mass', 'age']) and all(label in self.fixed_labels for label in ['FeH']):
                 # Both components will have the same starting values.
@@ -202,6 +207,9 @@ class StellarModel:
 
             # else:
             #     print("Isochrone labels not found in model labels. Please add 'mass', 'age', and 'fe_h' to model labels for interpolation")
+
+        # elapsed_time = time.time() - start_time
+        # print(f"Time taken for interpolation computation: {elapsed_time:.4f} seconds")
 
 
 
