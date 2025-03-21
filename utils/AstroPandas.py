@@ -12,8 +12,10 @@ import os
 working_directory = '/avatar/yanilach/PhD-Home/binaries_galah-main/spectrum_analysis/BinaryAnalysis'
 sys.path.append(os.path.join(working_directory, 'utils'))
 import DataFunctions as df
+from astropy.table import Table
 
 GALAH_DR4 = None
+isochrone_data = None
 
 def FitsToDF(fn, data_index=None):
     hdul = fits.open(fn)
@@ -79,7 +81,7 @@ def LoadSpectraFitsFile(fn):
 
     if np.__version__ > '2.0.0':
         wavelength = np.array(wavelength).byteswap().view(np.array(wavelength).dtype.newbyteorder())
-        data = np.array(data).byteswap().view(np.array(data).dtype.newbyteorder())
+        data =   np.array(data).byteswap().view(np.array(data).dtype.newbyteorder())
     else:
         wavelength = (np.array(wavelength).byteswap().newbyteorder())
         data = (np.array(data).byteswap().newbyteorder())
@@ -127,14 +129,19 @@ def split_data_by_gaps(wavelengths, flux, gap_threshold=5):
 
 
 
-def plot_hr_GALAH(id=None, binary_data=None, lines=False, error_map=False):
+def plot_hr_GALAH(id=None, binary_data=None, lines=False, error_map=False, components=False):
 
     global GALAH_DR4
+    global isochrone_data
 
     if type(GALAH_DR4) == type(None):
         print("Loading GALAH DR4 data into cache...")
         GALAH_DR4_dir = '/avatar/buder/GALAH_DR4/'
         GALAH_DR4 = df.FitsToDF(GALAH_DR4_dir + "catalogs/galah_dr4_allspec_240207.fits")
+
+    if type(isochrone_data) == type(None):
+        print("Loading isochrone data into cache...")
+        isochrone_data = Table.read('/avatar/yanilach/PhD-Home/binaries_galah-main/spectrum_analysis/BinaryAnalysis/' + 'assets/' + 'parsec_isochrones_reduced.fits')
 
     GALAH_data = GALAH_DR4
 
@@ -144,6 +151,24 @@ def plot_hr_GALAH(id=None, binary_data=None, lines=False, error_map=False):
     # Plot the 2D histogram
     plt.hexbin(cleaned_data['teff'], cleaned_data['logg'], gridsize=100, cmap='gray_r', alpha=0.5)
 
+    age = 9.3
+    isochrone_data_selection = isochrone_data[(isochrone_data['logAge'] <= age + 0.01) & (isochrone_data['logAge'] >= age - 0.01) & (isochrone_data['m_h'] == 0.0)]
+
+
+
+    ms_binaries = [(3000, 4.4), (3500, 4.4), (4000, 4.4), (4500, 4.4), (5000, 4.3), (5500, 4.2), (5750, 4)]
+    min_teff = np.min([x for x, y in ms_binaries])
+    max_teff = np.max([x for x, y in ms_binaries])
+
+    # Polyfit these coordinates
+    x, y = zip(*ms_binaries)
+    coefficients = np.polyfit(x, y, 2)
+    polynomial = np.poly1d(coefficients)
+    # Plot the polynomial
+    plt.plot(np.arange(3500, max_teff), polynomial(np.arange(3500, max_teff)), color='red', label='Binary Main Sequence', ls='--')
+
+
+    plt.plot(10 ** isochrone_data_selection['logT'], isochrone_data_selection['logg'], alpha=0.5, color='black', label='MS', ls='dotted')
 
     # Select the sample stars in the galah data and show in blue
     if id is not None:
@@ -161,9 +186,15 @@ def plot_hr_GALAH(id=None, binary_data=None, lines=False, error_map=False):
     elif id is None and binary_data is not None and error_map is False:
         # Plot everything with the binary stars
         sample = GALAH_data[GALAH_data['sobject_id'].isin(binary_data['sobject_id'])]
-        plt.scatter(sample['teff'], sample['logg'], alpha=0.5, color='red', s=25, label='Unresolved')
-        plt.scatter(binary_data['teff_1'] * 1e3, binary_data['logg_1'], alpha=0.5, color='blue', s=25, label='Primary')
-        plt.scatter(binary_data['teff_2'] * 1e3, binary_data['logg_2'], alpha=0.5, color='green', s=25, label='Secondary')
+
+        if components is False:
+            plt.scatter(sample['teff'], sample['logg'], alpha=0.5, color='red', s=25, label='Unresolved')
+            plt.scatter(binary_data['teff_1'] * 1e3, binary_data['logg_1'], alpha=0.5, color='blue', s=25, label='Primary')
+            plt.scatter(binary_data['teff_2'] * 1e3, binary_data['logg_2'], alpha=0.5, color='green', s=25, label='Secondary')
+        elif components == 'primary':
+            plt.scatter(binary_data['teff_1'] * 1e3, binary_data['logg_1'], alpha=0.5, color='coral', s=10, label='Primary')
+        elif components == 'secondary':
+            plt.scatter(binary_data['teff_2'] * 1e3, binary_data['logg_2'], alpha=0.5, color='mediumseagreen', s=10, label='Secondary')
 
         if lines:
             for i in range(len(sample)):
@@ -188,6 +219,7 @@ def plot_hr_GALAH(id=None, binary_data=None, lines=False, error_map=False):
 
         # Plot a scatter showing the unresloved and color by rchi2
         plt.scatter(combined_data['teff'], combined_data['logg'], 
+                label='Unresolved',
                 c=combined_data['rchi2'] * 1e3, 
                 cmap='coolwarm', 
                 alpha=0.5, 

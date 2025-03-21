@@ -104,6 +104,29 @@ def load_isochrones(type='', extended=False):
         return None
 
 
+def create_interpolator(isochrone_table, age_range, m_h_range, mass_range):
+    """Attempts to create an interpolator with given bounds."""
+    isochrone_table_reduced = isochrone_table[
+        (isochrone_table['logAge'] >= age_range[0]) &
+        (isochrone_table['logAge'] <= age_range[1]) &
+        (isochrone_table['m_h'] >= m_h_range[0]) &
+        (isochrone_table['m_h'] <= m_h_range[1]) &
+        (isochrone_table['mini'] >= mass_range[0]) &
+        (isochrone_table['mini'] <= mass_range[1])
+    ]
+
+    print(f"Isochrone table size: {len(isochrone_table_reduced)}")
+    
+    if len(isochrone_table_reduced) < 100:  # Check if there are enough points for interpolation
+        raise ValueError("Insufficient data points for interpolation.")
+
+    # Extract input (mass, logAge, m_h) and output (logT, logg, logL)
+    parsec_points = np.array([isochrone_table_reduced['mini'], isochrone_table_reduced['logAge'], isochrone_table_reduced['m_h']]).T
+    parsec_values = np.array([isochrone_table_reduced['logT'], isochrone_table_reduced['logg'], isochrone_table_reduced['logL']]).T
+
+    return LinearNDInterpolator(parsec_points, parsec_values)
+
+
 # This is for printing only. The model has it's own code.
 def interpolate_isochrone(mass, age, m_h, int_type='trilinear'):
     """
@@ -158,11 +181,11 @@ def interpolate_isochrone(mass, age, m_h, int_type='trilinear'):
         except:
             print("Error in interpolation.")
             print("Recieved values: ", mass, age, m_h)
-            interpolated = {
-                'teff': 0,
-                'logg': 0,
-                'logl': 0
-            }
+            # interpolated = {
+            #     'teff': 0,
+            #     'logg': 0,
+            #     'logl': 0
+            # }
             return interpolated
 
     else:
@@ -238,6 +261,9 @@ def set_logging_paths(sobject_id):
 
 
 def end_processing(msg):
+    if 'pending_path' not in globals():
+        print("No pending path defined.")
+        exit()
     if os.path.exists(pending_path):
         os.remove(pending_path)
         print(f"File '{pending_path}' deleted successfully." + str(msg))
@@ -279,6 +305,9 @@ def read_spectrum(sobject_id, tmass_id=None, neglect_ir_beginning=True):
         if os.path.exists(dir):
             fits_file = fits.open(dir)
             # print("Succsefully found file for object " + dir)
+        elif os.path.exists(dir.replace('observations/', 'observations_6p1/')):
+            fits_file = fits.open(dir.replace('observations/', 'observations_6p1/'))
+            print("Succsefully found file for object at observations_6p1: " + dir)
         else:
             print("No file found for spectra ", dir)
             return False
@@ -438,14 +467,14 @@ def read_spectrum(sobject_id, tmass_id=None, neglect_ir_beginning=True):
     # print('Working with the following CCDs: ', spectrum['available_ccds'])
 
     if (spectrum['available_ccds'] == []):
-        if os.path.exists(pending_path):
+        if 'pending_path' in globals() and os.path.exists(pending_path):
             os.remove(pending_path)
             print(f"File '{pending_path}' deleted successfully. No CCDs available, incomplete.")
+        if 'failed_path' in globals():
+            with open(failed_path + str('_noCCDs'), 'w') as f:
+                pass  # No need to write anything; file will be created empty
 
-        with open(failed_path + str('_noCCDs'), 'w') as f:
-            pass  # No need to write anything; file will be created empty
-
-        exit()
+        sys.exit("No CCDs available. Exiting.")
 
     for ccd in spectrum['available_ccds']:
         spectrum['wave_ccd'+str(ccd)] = spectrum['crval_ccd'+str(ccd)] + spectrum['cdelt_ccd'+str(ccd)]*np.arange(len(spectrum['counts_ccd'+str(ccd)]))
@@ -714,7 +743,7 @@ def calculate_default_degrading_wavelength_grid(default_model_wave, spectrum, sy
             if max(sigma_synth)>=min(spectrum['lsf_ccd'+str(ccd)])*0.95:
                 logging.error('Resolving power of the synthetic spectrum must be higher.')
 
-                if os.path.exists(pending_path):
+                if 'pending_path' in globals() and os.path.exists(pending_path):
                     os.remove(pending_path)
                     print(f"File '{pending_path}' deleted successfully. No CCDs available, incomplete.")
 

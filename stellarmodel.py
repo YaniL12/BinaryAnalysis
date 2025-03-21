@@ -24,6 +24,7 @@ class StellarModel:
 
         self.bounds = {}
         self.original_bounds = original_bounds
+        self.unormalized_bounds = {}
         self.params = {}
         self.indices = {}
         self.unique_indices = {}
@@ -135,7 +136,7 @@ class StellarModel:
         # Outputs Teff, logg, and log(L) bolometric (flux)
 
         # start_time = time.time()
-        
+
         if self.interpolator == 'trilinear':
             # print("Trilinear interpolation.")
 
@@ -346,15 +347,27 @@ class StellarModel:
         self.wavelengths, self.flux, sigma2_iter1, self.model_flux, unmasked_iter1 = af.return_wave_data_sigma_model(self, spectrum, self.same_fe_h) 
         
     def get_residual(self):
-        return 100 * np.sum(abs(self.model_flux - self.flux)) / len(self.flux)
-    
-    def get_rchi2(self):
-        # Manual bound checking for interpolated values
-        # print(self.params['f_contr'], self.bounds['f_contr'])
-        if self.params['f_contr'] > self.bounds['f_contr'][1] or self.params['f_contr'] < self.bounds['f_contr'][0]:
-            return 1e10
+        r = 100 * np.sum(abs(self.model_flux - self.flux)) / len(self.flux)
 
-        return np.sum((self.model_flux - self.flux) ** 2) / (len(self.flux) - len(self.params))
+        return r
+    
+    def get_rchi2(self, with_bounds=True):
+        # Manual bound checking for interpolated values
+        r = np.sum((self.model_flux - self.flux) ** 2) / (len(self.flux) - len(self.params))
+
+        # Manual band enforcement for all parameters
+        if self.unormalized_bounds and with_bounds:
+            # print(self.unormalized_bounds)
+            for param, bounds in zip(self.get_params(), self.unormalized_bounds):
+                # print(f"Checking parameter {param} is outside bounds {self.unormalized_bounds[param]} with value {self.params[param]}. Penalising residual. {self.unormalized_bounds[param][1]}")
+                if self.params[param] > self.unormalized_bounds[param][1] or self.params[param] < self.unormalized_bounds[param][0]:
+                    # print(f"Parameter {param} is outside bounds {self.unormalized_bounds[param]} with value {self.params[param]}. Penalising residual.")
+                    r = r * 1e10
+
+            if abs(self.params['rv_1'] - self.params['rv_2']) < 60:
+                r = r * 1e10
+
+        return r
 
     def plot(self, title_text="", lines=None, line_buffer=10, no_lines=5, random_lines=False, component_fluxes=False, component_offset=0, vlines=True, show_plot=True):
         global important_lines
