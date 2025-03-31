@@ -109,9 +109,21 @@ class StellarModel:
                 if col in self.get_labels():
                     self.params[col] = row[col].iloc[0]
 
+            #Note we requre this as we interpolate for M = m - 0.1. REMOVE IF WE CHANGE THE OUTPUT FROM THE ANALYSIS!
+            self.params['mass_1'] += 0.1
+            self.params['mass_2'] += 0.1
+
+            # Check for missing parameters that have not been set
+            for col in self.get_labels():
+                if col not in data.columns:
+                    print("Missing parameter: ", col)
+                    # Raise an error
+                    raise ValueError("Missing parameter: " + col + ". Please check the data you passed to the model is the original data table, for example not a merged table where parameters have prefixes.")
             
             spectrum = af.read_spectrum(self.id)
             af.load_neural_network(spectrum)
+            
+            # print("Generating model")
             self.generate_model(spectrum)
 
         elif isinstance(data, Series):
@@ -136,7 +148,7 @@ class StellarModel:
         # Outputs Teff, logg, and log(L) bolometric (flux)
 
         # start_time = time.time()
-
+        # print("Interpolating isochrones...")
         if self.interpolator == 'trilinear':
             # print("Trilinear interpolation.")
 
@@ -145,8 +157,12 @@ class StellarModel:
             mass_query_1 = self.params['mass_1'] - 0.1
             mass_query_2 = self.params['mass_2'] - 0.1
 
+            # print("Passing", self.params['mass_1'], np.log10(self.params['age'] * 1e9), self.params['FeH'], "\n")
+
             interpolate_1 = af.interpolate_isochrone(mass_query_1, age_query, m_h_query)
             interpolate_2 = af.interpolate_isochrone(mass_query_2, age_query, m_h_query)
+
+            # print("Recieved", interpolate_1, "\n")
 
 
             self.params['teff_1'] = (interpolate_1['teff']) / 1000
@@ -364,14 +380,15 @@ class StellarModel:
                     # print(f"Parameter {param} is outside bounds {self.unormalized_bounds[param]} with value {self.params[param]}. Penalising residual.")
                     r = r * 1e10
 
-            if abs(self.params['rv_1'] - self.params['rv_2']) < 60:
-                r = r * 1e10
+                # Prevent the RVs from being too close together. This can force bad results be careful.
+            # if abs(self.params['rv_1'] - self.params['rv_2']) < 60:
+            #     r = r * 1e10
 
         return r
 
-    def plot(self, title_text="", lines=None, line_buffer=10, no_lines=5, random_lines=False, component_fluxes=False, component_offset=0, vlines=True, show_plot=True):
+    def plot(self, title_text="", lines=None, line_buffer=3, no_lines=5, random_lines=False, component_fluxes=False, component_offset=0, vlines=True, show_plot=True):
         global important_lines
-        
+        reg_buf = line_buffer
         # Initialize lists to hold legend handles and labels
         handles, labels = [], []
 
@@ -415,7 +432,12 @@ class StellarModel:
                         if abs(line - wavelength) <= 1:
                             line = wavelength
                             line_wvl = wavelength
-                
+
+                if "H" in important_lines[i][1] or "H" in important_lines[i][2]:
+                    line_buffer = 10
+                else:
+                    line_buffer = reg_buf
+
                 min_wave = line_wvl - line_buffer
                 max_wave = line_wvl + line_buffer
                 
@@ -438,6 +460,8 @@ class StellarModel:
                 difference = abs(self.model_flux[mask] - self.flux[mask])
                 h3, = axes[i].plot(self.wavelengths[mask], difference, label='Model Delta', linestyle='--')
                 axes[i].fill_between(self.wavelengths[mask], 0, difference, color='gray', alpha=0.3)
+
+                # axes[i].set_ylim(np.min(self.flux[mask]) - 0.1, 1.2)
 
                 # vlines = [7771.94, 7774.17, 7775.39]
                 # for vline in vlines:
@@ -516,6 +540,9 @@ class StellarModel:
             # One legend for all plots, positioned in the center underneath
             # axes[0].legend(loc='upper center', bbox_to_anchor=(0.5, -0.05), ncol=no_plots)
             fig.legend(handles=handles, labels=labels, loc='upper center', bbox_to_anchor=(0.5, -0.01), ncol=no_plots)
+
+
+            # For each subplot, set the y-axis to be determined by the min and max of the flux values
 
             # Annotate the figure
             x_start = 0.4
@@ -607,4 +634,42 @@ class StellarModel:
 
         plt.show()
 
-    
+    def plot_binned_residuals(self, bin_size=60):
+        bin_size = bin_size  # Bin width in Angstroms
+
+        # Get global wavelength range for this model
+        global_bins = np.arange(np.nanmin(self.wavelengths), np.nanmax(self.wavelengths), bin_size)
+        bin_centers = 0.5 * (global_bins[:-1] + global_bins[1:])  # Center of each bin
+
+        # Compute residuals
+        residuals = self.flux - self.model_flux
+
+        # Mask regions with no data
+        valid_mask = ~np.isnan(self.flux) & ~np.isnan(self.model_flux)
+        wave_valid = self.wavelengths[valid_mask]
+        residuals_valid = residuals[valid_mask]
+
+        # Bin residuals using the global binning scheme
+        binned_residuals = np.full(len(bin_centers), np.nan)  # NaN for missing bins
+
+        for i in range(len(global_bins) - 1):
+            mask = (wave_valid >= global_bins[i]) & (wave_valid < global_bins[i+1])
+            if np.any(mask):  # Only store bins that have data
+                binned_residuals[i] = np.nanmean(np.abs(residuals_valid[mask]))  # Mean absolute residual
+
+        # Plot results
+        plt.figure(figsize=(10, 5))
+        plt.bar(bin_centers, binned_residuals, width=bin_size, alpha=0.5, label=f'Binned |Residuals| ({bin_size} Å)', color='blue')
+        plt.plot(bin_centers, binned_residuals, 'o-', label='Scatter Points', color='r')
+        plt.axhline(0, color='gray', linestyle='--')
+        plt.xlabel("Wavelength (Å)")
+        plt.ylabel("Residuals (Flux - Model Flux)")
+        plt.legend()
+        plt.title("Binned Residuals for Model")
+
+        # Set x-axis limits to valid data range
+        plt.xlim(global_bins[0], global_bins[-1])
+
+        plt.show()
+
+        return bin_centers, binned_residuals

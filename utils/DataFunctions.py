@@ -341,6 +341,8 @@ def read_binary_result_file(fn, coltype=0, cols=None, ignore_header=False):
         elif coltype == 3:
             # For PSO with no interpolation
             cols = ['sobject_id', 'residual', 'rchi2', 'f_contr', 'teff_1', 'logg_1', 'mass_1', 'rv_1', 'vmic_1', 'vsini_1', 'teff_2', 'logg_2', 'mass_2', 'rv_2', 'vmic_2', 'vsini_2', 'FeH', 'age']
+        elif coltype == 4:
+            cols = ['sobject_id', 'residual', 'rchi2', 'f_contr', 'mass_1', 'rv_1', 'vmic_1', 'vsini_1', 'mass_2', 'rv_2', 'vmic_2', 'vsini_2', 'FeH', 'age', 'teff_1', 'teff_2', 'logg_1', 'logg_2', 'logl_1', 'logl_2', 'curvefit_f_contr', 'curvefit_mass_1', 'curvefit_rv_1', 'curvefit_vmic_1', 'curvefit_vsini_1', 'curvefit_mass_2', 'curvefit_rv_2', 'curvefit_vmic_2', 'curvefit_vsini_2', 'curvefit_FeH', 'curvefit_age', 'curvefit_teff_1', 'curvefit_teff_2', 'curvefit_logg_1', 'curvefit_logg_2', 'curvefit_logl_1', 'curvefit_logl_2', 'processing_time']
         else:
             cols = ['sobject_id', 'residual', 'rchi2', 'f_contr', 'mass_1', 'age_1', 'metallicity_1', 'rv_1', 'fe_h_1', 'vmic_1', 'vsini_1', 'teff_1', 'logg_1', 'logl_1', 'mass_2', 'age_2', 'metallicity_2', 'rv_2', 'fe_h_2', 'vmic_2', 'vsini_2', 'teff_2', 'logg_2', 'logl_2']
 

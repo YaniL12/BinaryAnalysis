@@ -55,7 +55,8 @@ def denormalize_parameters(normalized_params, bounds):
 sys.path.append(os.path.join(working_directory, 'utils'))
 import AstroPandas as ap
 
-isochrone_table = Table.read(working_directory +  '/assets/parsec_isochrones_logt_8p00_0p01_10p17_mh_m2p75_0p25_m0p75_mh_m0p60_0p10_0p70_GaiaEDR3_2MASS.fits')
+from scipy.interpolate import LinearNDInterpolator
+isochrone_table = Table.read('/avatar/yanilach/PhD-Home/binaries_galah-main/spectrum_analysis/BinaryAnalysis/' + 'assets/' + 'parsec_isochrones_reduced.fits')
 isochrone_interpolator = af.load_isochrones(type='trilinear')
 
 sobject_id = int(sys.argv[1])
@@ -64,17 +65,22 @@ labels_interp =  ['f_contr', 'mass_1', 'rv_1', 'vmic_1', 'vsini_1', 'mass_2', 'r
 
 
 def fit_model(sobject_id):
+    
+    start_time = time.time()
+
     spectrum = af.read_spectrum(sobject_id, tmass_id)
     if spectrum == False:
         return
 
     # same_fe_h = False
+    file = '/avatar/buder/GALAH_DR4/analysis_products_single/'+str(sobject_id)[:6]+'/'+str(sobject_id)+'/'+str(sobject_id)+'_single_fit_results.fits'
 
     try:
-        single_results = Table.read('/avatar/buder/GALAH_DR4/analysis_products_single/'+str(sobject_id)[:6]+'/'+str(sobject_id)+'/'+str(sobject_id)+'_single_fit_results.fits')
+        single_results = Table.read(file)
     except:
         print('Single results not available')
         return
+    
 
     # model = StellarModel(labels = ['teff', 'logg', 'rv', 'fe_h', 'vmic', 'vsini']) # Model with no interpolation
     # model = StellarModel(id=sobject_id, labels = ['mass', 'age', 'metallicity', 'rv', 'fe_h', 'vmic', 'vsini'], interpolator=isochrone_interpolator, interpolate_flux=True) # Flux can be used as a free parameter (False) or can be determined from luminosity ratios (from the isochrone) (True)
@@ -153,18 +159,45 @@ def fit_model(sobject_id):
 
 
     model.params['rv_1'] = single_results['rv_gauss'][0]
+    
+    # Assume the RVs are within 10 km/s of the values found by the CCF
+    model.bounds['rv_1'] = (model.params['rv_1'] - 30, model.params['rv_1'] + 30)
+
+
     model.params['rv_2'] = single_results['rv_peak_2'][0]
     if np.isnan(model.params['rv_2']) or str(model.params['rv_2']) == "--":
-        print("No RV2 value!")
-        return
 
-    # min_rv = min(model.params['rv_1'], model.params['rv_2']) - 100
-    # max_rv = max(model.params['rv_1'], model.params['rv_2']) + 100
-    # model.set_bounds('rv', (min_rv, max_rv))
+        CCF_results = pd.read_csv("/avatar/yanilach/PhD-Home/binaries_galah-main/spectrum_analysis" + "/CCF_results_processed.txt", sep='\t', dtype={'no_peaks': float, 'rv_1': float, 'rv_2': float})
+        CCF_results = CCF_results[CCF_results['sobject_id'] == sobject_id]
+        # print("CCF results: ", CCF_results, CCF_results['rv_1'].values[0], CCF_results['rv_2'].values[0])
+        ccf = True
 
-    # Assume the RVs are within 10 km/s of the values found by the CCF
-    model.bounds['rv_1'] = (model.params['rv_1'] - 10, model.params['rv_1'] + 10)
-    model.bounds['rv_2'] = (model.params['rv_2'] - 10, model.params['rv_2'] + 10)
+        # If CCF_results matched to an object ID and there are more than 1 peaks, use the RV values from the CCF
+        if len(CCF_results) > 0 and not np.isnan(CCF_results['rv_1'].values[0]) and not np.isnan(CCF_results['rv_2'].values[0]) and CCF_results['no_peaks'].values[0] > 1:
+        # if CCF_results['no_peaks'].values[0] > 1:
+            model.params['rv_1'] = CCF_results['rv_1'].values[0]
+            model.params['rv_2'] = CCF_results['rv_2'].values[0]
+            
+            # Update both bounds as we've potentially changed both RV1 and RV2
+            model.bounds['rv_1'] = (model.params['rv_1'] - 10, model.params['rv_1'] + 10)
+            model.bounds['rv_2'] = (model.params['rv_2'] - 10, model.params['rv_2'] + 10)
+            print("Using CCF results for RVs: ", model.params['rv_1'], model.params['rv_2'])
+
+        # Use the RV1 value and assume RV2 is 100 km/s away. Best guess based on existing results.
+        elif model.params['rv_1'] > 0:
+            model.params['rv_2'] = model.params['rv_1'] - 100
+            ccf = False
+        else:
+            model.params['rv_2'] = model.params['rv_1'] + 100
+            ccf = False
+
+        # Update the bounds
+        if not ccf:
+            model.bounds['rv_2'] = (model.params['rv_1'] - 200, model.params['rv_1'] + 200)
+            print("No RV2 value! Setting rv_2 to ", model.params['rv_2'])
+
+    else:
+        model.bounds['rv_2'] = (model.params['rv_2'] - 30, model.params['rv_2'] + 30)
 
     model.set_param('teff', single_results['teff'][0]/1000.)
     model.set_param('logg', single_results['logg'][0])
@@ -172,16 +205,19 @@ def fit_model(sobject_id):
     # Set the parameters required for the interpolation. The resulting interpolated parameters (teff, logg, and logL) are highly sensitive to these.
     model.set_param('age', float(sys.argv[3]))
     # Update the age bounds to be within +- 2 and constrained by the bounds of the isochrone
-    # model.set_bounds('age', (max(age_min, model.params['age'] - 2), min(age_max, model.params['age'] + 2)))
+    model.set_bounds('age', (max(age_min, model.params['age'] - 2), min(age_max, model.params['age'] + 2)))
 
     mass_init = float(sys.argv[4])
     model.set_param('mass', mass_init)
     # Update the mass bounds to be within +- 2 and constrained by the bounds of the isochrone
     # model.set_bounds('mass', (max(isochrone_table['mass'].min(), mass_init - 2), min(isochrone_table['mass'].max(), mass_init + 2)))
+    model.set_bounds('mass', (max(isochrone_table['mini'].min(), mass_init - 2), min(isochrone_table['mini'].max(), mass_init + 2)))
 
     model.set_param('FeH', float(sys.argv[5]))
     # Update FeH bounds to be within +- 1 and constrained by the isochrone
     # model.set_bounds('FeH', (max(isochrone_table['m_h'].min(), model.params['FeH'] - 1), min(isochrone_table['m_h'].max(), model.params['FeH'] + 1)))
+    model.set_bounds('FeH', (max(isochrone_table['m_h'].min(), model.params['FeH'] - 1), min(isochrone_table['m_h'].max(), model.params['FeH'] + 1)))
+
 
     model.set_param('vmic', 1.5)
     model.set_param('vsini', 4.0)
@@ -201,7 +237,10 @@ def fit_model(sobject_id):
 
     print("Initial bounds:")
     print(model.bounds)
+    model.unormalized_bounds = model.bounds
 
+    print("Unormalized bounds:")
+    print(model.unormalized_bounds)
 
     if len(model.get_params(values_only=True, exclude_fixed=True)) != len(model.bounds):
         print("Length of parameters and bounds do not match")
@@ -252,14 +291,14 @@ def fit_model(sobject_id):
             # residuals = model.get_residual()
 
             in_bounds = True
-            for param, bounds in zip( model.get_params(), unnormalized_bounds):
-                # print("Checking bounds for ", param, model.params[param], bounds)
-                if model.params[param] < bounds[0] or model.params[param] > bounds[1]:
-                    # print(f"Parameter {param} out of bounds: {model.params[param]}. Bounds: {bounds[0]} and {bounds[1]}")
-                    residuals = 1e10
-                    residuals_list.append(residuals)
-                    in_bounds = False
-                    break
+            # for param, bounds in zip( model.get_params(), unnormalized_bounds):
+            #     # print("Checking bounds for ", param, model.params[param], bounds)
+            #     if model.params[param] < bounds[0] or model.params[param] > bounds[1]:
+            #         # print(f"Parameter {param} out of bounds: {model.params[param]}. Bounds: {bounds[0]} and {bounds[1]}")
+            #         residuals = 1e10
+            #         residuals_list.append(residuals)
+            #         in_bounds = False
+            #         break
 
             if in_bounds:
                 residuals = model.get_rchi2()
@@ -286,7 +325,7 @@ def fit_model(sobject_id):
 # 
     try:
         # Fit the model to the data. This takes the model parameters and produces a synthetic spectra using the neural network. It then compares this to the observed data and adjusts the model parameters (and thereby the synthetic spectra from the NN) to minimize the difference between the two.
-        kwargs={'maxfev':30,'xtol':1e-5, 'gtol':1e-5, 'ftol':1e-5}
+        kwargs={'maxfev':20,'xtol':1e-5, 'gtol':1e-5, 'ftol':1e-5}
         model_parameters_iter1, covariances_iter1 = curve_fit(
             lambda wave_init, 
                 *model_parameters: af.get_flux_only(wave_init, model, spectrum, model.same_fe_h, unmasked, *model_parameters, plot=True),
@@ -305,6 +344,8 @@ def fit_model(sobject_id):
 
 
 
+    params_curve_fit = model.get_params(values_only=True)
+    params_curve_fit_list = ', '.join(map(str, params_curve_fit))
 
     # Get the original parameter values and bounds
     original_params = model.get_params(values_only=True)# model_parameters_iter1 # model.get_params(values_only=True)
@@ -321,25 +362,77 @@ def fit_model(sobject_id):
     if model.get_residual() < 5:
         # print("Good curve fit. Updating bounds and initial parameters")
         # Update bounds to so that they are within 25% of the values returned by curve_fit
-        margin = 0.1
-        bounds = [(max(lb, p - margin * abs(p)), min(ub, p + margin * abs(p)) ) for p, (lb, ub) in zip(normalized_x0, [(0, 1)] * len(bounds))]
-        # Ensure these new bounds are also within the (0, 1) bounds
-        bounds = [(max(0, lb), min(1, ub)) for lb, ub in bounds]
-
-        unnormalized_bounds = [(original_lb + (lb - 0) * (original_ub - original_lb), 
-                                original_lb + (ub - 0) * (original_ub - original_lb)) 
-                            for (lb, ub), (original_lb, original_ub) in zip(bounds, original_bounds)]
-
+        margin = 0.2
             
     else:
         # Normalize the bounds
-        bounds = [(0, 1)] * len(bounds)
-        unnormalized_bounds = original_bounds
+        # bounds = [(0, 1)] * len(bounds)
+        # unnormalized_bounds = original_bounds
+        margin = 1
+
+
+    bounds = [(max(lb, p - margin * abs(p)), min(ub, p + margin * abs(p)) ) for p, (lb, ub) in zip(normalized_x0, [(0, 1)] * len(bounds))]
+
+    # Set a 0.1 margin on the bounds required for the interpolation. Otherwise we create an interpolator that is too large if the margin on the parameters is to expansive.
+    if margin == 1:
+        bounds[model.label('age')] = (max(bounds[model.label('age')][0], normalized_x0[model.label('age')] - 0.1), min(bounds[model.label('age')][1], normalized_x0[model.label('age')] + 0.1))
+        bounds[model.label('FeH')] = (max(bounds[model.label('FeH')][0], normalized_x0[model.label('FeH')] - 0.1), min(bounds[model.label('FeH')][1], normalized_x0[model.label('FeH')] + 0.1))
+        bounds[model.label('mass', comp=1)] = (max(bounds[model.label('mass', comp=1)][0], normalized_x0[model.label('mass', comp=1)] - 0.1), min(bounds[model.label('mass', comp=1)][1], normalized_x0[model.label('mass', comp=1)] + 0.1))
+
+    # Ensure these new bounds are also within the (0, 1) bounds
+    bounds = [(max(0, lb), min(1, ub)) for lb, ub in bounds]
+
+
+
+
+    unnormalized_bounds = [(original_lb + (lb - 0) * (original_ub - original_lb), 
+                            original_lb + (ub - 0) * (original_ub - original_lb)) 
+                        for (lb, ub), (original_lb, original_ub) in zip(bounds, original_bounds)]
+    print("Age bounds")
+    print(unnormalized_bounds[model.label('age')])
+    print("FeH bounds")
+    print(unnormalized_bounds[model.label('FeH')])
+    print("Mass bounds")
+    print(unnormalized_bounds[model.label('mass', comp=1)])
+    
+
+
 
 
     # Set the bounds of the model object. THIS IS IMPORTANT, we need to pass normalised bounds AS WELL as values.
     bounds_dict = {param: bound for param, bound in zip(model.get_params(values_only=False, exclude_fixed=True), bounds)}
     model.bounds = bounds_dict
+    
+    unormalized_bounds_dict = {param: bound for param, bound in zip(model.get_params(values_only=False, exclude_fixed=True), unnormalized_bounds)}
+    model.unormalized_bounds = unormalized_bounds_dict
+
+    print(unnormalized_bounds, model.label('age'))
+    age_range = np.log10(np.array(unnormalized_bounds[model.label('age')]) * 1e9)
+    m_h_range = unnormalized_bounds[model.label('FeH')]
+    mass_range = unnormalized_bounds[model.label('mass', comp=1)]
+
+    # Try creating the interpolator with the original range
+    try:
+        interpolator = af.create_interpolator(isochrone_table, age_range, m_h_range, mass_range)
+    except Exception as e:
+        print(f"Interpolator creation failed: {e}")
+
+        # If expansion is allowed, modify the age range and try again
+        if  age_range[1] - age_range[0] < 1:
+            age_range = np.array([model.params['age'] - 1, model.params['age'] + 1])
+            age_range = np.log10(age_range * 1e9)
+            print("Overriding age range bounds to expand isochrone table.")
+
+            # Try again
+            try:
+                interpolator =  af.create_interpolator(isochrone_table, age_range, m_h_range, mass_range)
+            except Exception as e:
+                raise ValueError(f"Failed to create an interpolator, even after expanding age range: {e}")
+
+    print("Finished creating interpolator")
+
+
+    model.interpolator = interpolator
 
 
     print("Optimizing with PSO")
@@ -351,7 +444,6 @@ def fit_model(sobject_id):
     print(normalized_x0)
     print("Normalised bounds: ")
     print(model.get_bounds(type='tuple'))
-
 
     # result = scipy.optimize.minimize(
     #     objective_function_norm,
@@ -394,7 +486,7 @@ def fit_model(sobject_id):
 
     # Initialize the optimizer
     optimizer = ps.single.GlobalBestPSO(
-        n_particles=50,              # Number of particles
+        n_particles=100,              # Number of particles
         dimensions=len(lower_bounds),       # Dimensionality of the parameter space
         options=options,
         bounds=bounds_array           # (lower_bounds, upper_bounds)
@@ -419,7 +511,8 @@ def fit_model(sobject_id):
 
     params = model.get_params(values_only=True)
     params_list = ', '.join(map(str, params))
-    print(model.get_residual(), model.get_rchi2(), params_list)
 
+    total_time = time.time() - start_time
+    print(model.get_residual(), model.get_rchi2(with_bounds=False), params_list, params_curve_fit_list, total_time)
 
 fit_model(sobject_id)

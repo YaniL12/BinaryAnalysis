@@ -216,21 +216,92 @@ def plot_hr_GALAH(id=None, binary_data=None, lines=False, error_map=False, compo
         combined_data = GALAH_data.merge(binary_data, how='inner', on='sobject_id')
         combined_data = combined_data.dropna(subset=['rchi2'])
     
+        if error_map is not True:
+            column = error_map
+            plt.scatter(combined_data['teff'], combined_data['logg'], 
+                        label='Unresolved',
+                        c=combined_data[column], 
+                        cmap='coolwarm', 
+                        alpha=0.5, 
+                        s=15)
+            # Colorbar
+            plt.colorbar(label=column)
+        else:
+            # Plot a scatter showing the unresloved and color by rchi2
+            plt.scatter(combined_data['teff'], combined_data['logg'], 
+                    label='Unresolved',
+                    c=combined_data['rchi2'] * 1e3, 
+                    cmap='coolwarm', 
+                    alpha=0.5, 
+                    s=15)  # Ensure a minimum size of 10
+            # Colorbar
+            plt.colorbar(label='rchi2')
 
-        # Plot a scatter showing the unresloved and color by rchi2
-        plt.scatter(combined_data['teff'], combined_data['logg'], 
-                label='Unresolved',
-                c=combined_data['rchi2'] * 1e3, 
-                cmap='coolwarm', 
-                alpha=0.5, 
-                s=15)  # Ensure a minimum size of 10
-        # Colorbar
-        plt.colorbar(label='rchi2')
 
-
-    plt.rcParams.update({'font.size': 20})
+    # plt.rcParams.update({'font.size': 20})
     plt.xlabel('teff')
     plt.ylabel('logg')
+    plt.ylim(-1, 5)
+    plt.legend()
+    plt.gca().invert_xaxis()
+    plt.gca().invert_yaxis()
+    plt.xlim(8000, 3000)
+    plt.tight_layout()
+
+    plt.show()
+
+
+import seaborn as sns
+
+def plot_hr_GALAH_heatmap(id=None, binary_data=None, lines=False, error_map=False, components=False):
+
+    global GALAH_DR4
+    global isochrone_data
+
+    if GALAH_DR4 is None:
+        print("Loading GALAH DR4 data into cache...")
+        GALAH_DR4_dir = '/avatar/buder/GALAH_DR4/'
+        GALAH_DR4 = df.FitsToDF(GALAH_DR4_dir + "catalogs/galah_dr4_allspec_240207.fits")
+
+    if isochrone_data is None:
+        print("Loading isochrone data into cache...")
+        isochrone_data = Table.read('/avatar/yanilach/PhD-Home/binaries_galah-main/spectrum_analysis/BinaryAnalysis/assets/parsec_isochrones_reduced.fits')
+
+    GALAH_data = GALAH_DR4
+
+    plt.figure(figsize=(15, 7))
+    cleaned_data = GALAH_data[['teff', 'logg']].replace([np.inf, -np.inf], np.nan).dropna()
+
+    # Plot a smoothed heatmap instead of individual points
+    sns.kdeplot(x=cleaned_data['teff'], y=cleaned_data['logg'], 
+                cmap='magma', fill=True, levels=100, bw_adjust=0.5)
+
+    age = 9.3
+    isochrone_data_selection = isochrone_data[
+        (isochrone_data['logAge'] <= age + 0.01) &
+        (isochrone_data['logAge'] >= age - 0.01) &
+        (isochrone_data['m_h'] == 0.0)
+    ]
+
+    ms_binaries = [(3000, 4.4), (3500, 4.4), (4000, 4.4), (4500, 4.4), 
+                   (5000, 4.3), (5500, 4.2), (5750, 4)]
+    min_teff = np.min([x for x, y in ms_binaries])
+    max_teff = np.max([x for x, y in ms_binaries])
+
+    # Fit and plot a polynomial to binary main sequence
+    x, y = zip(*ms_binaries)
+    coefficients = np.polyfit(x, y, 2)
+    polynomial = np.poly1d(coefficients)
+    plt.plot(np.arange(3500, max_teff), polynomial(np.arange(3500, max_teff)), 
+             color='red', label='Binary Main Sequence', ls='--')
+
+    plt.plot(10 ** isochrone_data_selection['logT'], 
+             isochrone_data_selection['logg'], 
+             alpha=0.5, color='black', label='MS', ls='dotted')
+
+    plt.rcParams.update({'font.size': 20})
+    plt.xlabel('Teff (K)')
+    plt.ylabel('Log g')
     plt.ylim(-1, 5)
     plt.legend()
     plt.gca().invert_xaxis()

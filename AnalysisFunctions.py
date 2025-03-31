@@ -181,11 +181,11 @@ def interpolate_isochrone(mass, age, m_h, int_type='trilinear'):
         except:
             print("Error in interpolation.")
             print("Recieved values: ", mass, age, m_h)
-            # interpolated = {
-            #     'teff': 0,
-            #     'logg': 0,
-            #     'logl': 0
-            # }
+            interpolated = {
+                'teff': 0,
+                'logg': 0,
+                'logl': 0
+            }
             return interpolated
 
     else:
@@ -746,9 +746,9 @@ def calculate_default_degrading_wavelength_grid(default_model_wave, spectrum, sy
                 if 'pending_path' in globals() and os.path.exists(pending_path):
                     os.remove(pending_path)
                     print(f"File '{pending_path}' deleted successfully. No CCDs available, incomplete.")
-
-                with open(failed_path + str('_resolving_power'), 'w') as f:
-                    pass  # No need to write anything; file will be created empty
+                if 'failed_path' in globals():
+                    with open(failed_path + str('_resolving_power'), 'w') as f:
+                        pass  # No need to write anything; file will be created empty
 
                 exit()
 
