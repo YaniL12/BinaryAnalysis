@@ -10,7 +10,7 @@ class StellarModel:
     interpolator = None
 
     # Constructor with default labels and components. Override for custom labels and components
-    def __init__(self, id="No ID", labels = ['rv', 'teff', 'logg', 'FeH', 'vmic', 'vsini'], fixed_labels=[], single_labels=[], components = 2, same_fe_h=False, interpolator=None, interpolate_flux=False, original_bounds=None):
+    def __init__(self, id="No ID", labels = ['rv', 'teff', 'logg', 'FeH', 'vmic', 'vsini'], derived_labels=[], fixed_labels=[], single_labels=[], components = 2, same_fe_h=False, interpolator=None, interpolate_flux=False, original_bounds=None, isochrone_table=None):
 
     # Dictionaries for labels, bounds, and initial values
     # These should be instance level variables not class level. Otherwise they will be shared between all instances.
@@ -19,12 +19,13 @@ class StellarModel:
         self.same_fe_h = same_fe_h
 
         self.model_labels = {}
+        self.derived_labels = derived_labels
         self.unique_labels = []
         self.single_labels = single_labels
 
         self.bounds = {}
         self.original_bounds = original_bounds
-        self.unormalized_bounds = {}
+        self.unnormalized_bounds = {}
         self.params = {}
         self.indices = {}
         self.unique_indices = {}
@@ -35,7 +36,7 @@ class StellarModel:
 
         self.param_data = {}
 
-        self.isochrone_table = None
+        self.isochrone_table = isochrone_table
 
         # Should we use a simple flux model or determine flux ratios from interpolated luminosity?
         self.interpolate_flux = interpolate_flux
@@ -46,6 +47,7 @@ class StellarModel:
 
         # self.unique_labels.append('f_contr')
         self.unique_labels.extend(labels)
+        self.unique_labels.extend(derived_labels)
 
         # Only one instance of f_contr. This will need to be changeed for multiple systems where n_comps > 2
         self.model_labels['f_contr'] = 'f_contr'
@@ -54,34 +56,37 @@ class StellarModel:
             self.unique_indices[label] = i
 
         for j in range(self.components):
-            for i, label in enumerate(labels):
+            for i, label in enumerate(list(labels) + list(derived_labels)):
                 self.model_labels[label + '_' + str(j+1)] = label + '_' + str(j+1)
 
         # Add single labels to the model labels. These are those that are the same for both components.
         for i, label in enumerate(single_labels):
             self.model_labels[label] = label
-
+            
         # Instantiate bounds and params dictionaries with defaults
-        for i, label in enumerate(self.model_labels):
-            self.bounds[label] = (-np.inf, np.inf)
-            self.params[label] = 0
-            self.indices[label] = i
+        for i, label in enumerate(list(self.model_labels)):
+            self.bounds[label] = (-1e5, 1e5)
+
+            if label in self.model_labels:
+                self.params[label] = 0
+                self.indices[label] = i
+
 
         if interpolator is not None:
             self.interpolator = interpolator
 
             # Interpolator requires mass, age, and metallicity to be present in the model labels
             # Mass will be different for each component, the remaining parameters will be the same for both components (age, FeH).
-            if same_fe_h and all(label in self.single_labels for label in ['age', 'FeH']) and all(label in self.unique_labels for label in ['mass']):
-                self.add_param('teff', 0)
-                self.add_param('logg', 0)
-                self.add_param('logl', 0)
+            # if same_fe_h and all(label in self.single_labels for label in ['age', 'FeH']) and all(label in self.unique_labels for label in ['mass']):
+            #     self.add_param('teff', 0)
+            #     self.add_param('logg', 0)
+            #     self.add_param('logl', 0)
 
-            # elif all(label in self.unique_labels for label in ['mass', 'age']) and all(label in self.fixed_labels for label in ['FeH']):
-            elif all(label in self.unique_labels for label in ['mass', 'age', 'FeH']):
-                self.add_param('teff', 0)
-                self.add_param('logg', 0)
-                self.add_param('logl', 0)
+            # # elif all(label in self.unique_labels for label in ['mass', 'age']) and all(label in self.fixed_labels for label in ['FeH']):
+            # elif all(label in self.unique_labels for label in ['mass', 'age', 'FeH']):
+            #     self.add_param('teff', 0)
+            #     self.add_param('logg', 0)
+            #     self.add_param('logl', 0)
 
                 # self.interpolate()
         
@@ -143,14 +148,34 @@ class StellarModel:
         spectrum = af.read_spectrum(self.id)
         self.generate_model(spectrum)
 
-    def interpolate(self):
+    # def generate_interpolator(self):
+        # age_range = np.log10(np.array(self.unnormalized_bounds['age']) * 1e9)
+        # m_h_range = self.unnormalized_bounds['FeH']
+        # mass_range = self.unnormalized_bounds['mass_1']
+
+        # print("ranges ", age_range, m_h_range, mass_range)
+        # print(self.isochrone_table)
+
+        # interpolator = af.create_interpolator(self.isochrone_table, age_range, m_h_range, mass_range)
+
+        # self.interpolator = interpolator
+        
+        # return interpolator
+
+
+
+
+    def interpolate(self, return_values=False):
         # Accepts mass, log(age), metallicity.
         # Outputs Teff, logg, and log(L) bolometric (flux)
 
         # start_time = time.time()
-        # print("Interpolating isochrones...")
+
+        # This interpolation function is used before the initial curve fit. This creates an interpolator and interpolates on the fly. 
+        # Code is also stored within AnalysisFunctions.py.
         if self.interpolator == 'trilinear':
-            # print("Trilinear interpolation.")
+            if return_values:
+                print("Using trilinear interpolation")
 
             age_query = np.log10(self.params['age'] * 1e9)
             m_h_query = self.params['FeH']
@@ -158,6 +183,7 @@ class StellarModel:
             mass_query_2 = self.params['mass_2'] - 0.1
 
             # print("Passing", self.params['mass_1'], np.log10(self.params['age'] * 1e9), self.params['FeH'], "\n")
+            # print("Passing to analysis functions: ", mass_query_1, age_query, m_h_query)
 
             interpolate_1 = af.interpolate_isochrone(mass_query_1, age_query, m_h_query)
             interpolate_2 = af.interpolate_isochrone(mass_query_2, age_query, m_h_query)
@@ -173,8 +199,13 @@ class StellarModel:
             self.params['logg_2'] = interpolate_2['logg']
             self.params['logl_2'] = interpolate_2['logl']
 
+
+        # After the curve fit we perform all subsequent interpolations using the cached interpolator generated in the main script by AnalysisFunctions.
+        # This has reduced bounds and should be faster.
         elif self.interpolator is not None:
             # print("Cached interpolation.")
+            if return_values:
+                print("Using internal interpolation")
 
             # if all(label in self.unique_labels for label in ['mass', 'age']) and all(label in self.fixed_labels for label in ['FeH']):
                 # Both components will have the same starting values.
@@ -229,6 +260,8 @@ class StellarModel:
         # print(f"Time taken for interpolation computation: {elapsed_time:.4f} seconds")
 
 
+        if return_values:
+            return interpolate_1, interpolate_2
 
     # For single parameter retrieval (E.g. teff_1 not teff)
     def get_param(self, param):
@@ -271,6 +304,12 @@ class StellarModel:
                 self.bounds[param + '_' + str(i+1)] = bounds
         elif param in self.single_labels:
             self.bounds[param] = bounds
+        elif param in self.derived_labels:
+            # This is a new parameter that is not fit but is an output.
+            # Assume it's for each component and not unique.
+            for i in range(self.components):
+                print("Setting bound on: ", param + '_' + str(i+1), " to ", bounds)
+                self.bounds[param + '_' + str(i+1)] = bounds
 
     
     # Returns initial parameters as a dictionary without suffixes for each component. E.g. fe_h_1 = 1 -> fe_h = 1
@@ -340,7 +379,7 @@ class StellarModel:
         else:
             # This is an array of values.
             #  Model labels we are trying to fit
-            fit_labels = [label for label in self.model_labels if label.split('_')[0] not in self.fixed_labels]
+            fit_labels = [label for label in list(self.model_labels) if label.split('_')[0] not in self.fixed_labels]
 
             if len(fit_labels) == len(params):
                 for i, label in enumerate(fit_labels):
@@ -363,21 +402,27 @@ class StellarModel:
         self.wavelengths, self.flux, sigma2_iter1, self.model_flux, unmasked_iter1 = af.return_wave_data_sigma_model(self, spectrum, self.same_fe_h) 
         
     def get_residual(self):
-        r = 100 * np.sum(abs(self.model_flux - self.flux)) / len(self.flux)
+        clipped_flux = np.clip(self.flux, 0, 1)
+        r = 100 * np.sum(abs(self.model_flux - clipped_flux)) / len(clipped_flux)
 
         return r
     
-    def get_rchi2(self, with_bounds=True):
+    def get_rchi2(self, with_bounds=True, clipped=True):
         # Manual bound checking for interpolated values
-        r = np.sum((self.model_flux - self.flux) ** 2) / (len(self.flux) - len(self.params))
+        if clipped:
+            clipped_flux = np.clip(self.flux, 0, 1)
+        else:
+            clipped_flux = self.flux
+
+        r = np.sum((self.model_flux - clipped_flux) ** 2) / (len(clipped_flux) - len(self.params))
 
         # Manual band enforcement for all parameters
-        if self.unormalized_bounds and with_bounds:
-            # print(self.unormalized_bounds)
-            for param, bounds in zip(self.get_params(), self.unormalized_bounds):
-                # print(f"Checking parameter {param} is outside bounds {self.unormalized_bounds[param]} with value {self.params[param]}. Penalising residual. {self.unormalized_bounds[param][1]}")
-                if self.params[param] > self.unormalized_bounds[param][1] or self.params[param] < self.unormalized_bounds[param][0]:
-                    # print(f"Parameter {param} is outside bounds {self.unormalized_bounds[param]} with value {self.params[param]}. Penalising residual.")
+        if self.unnormalized_bounds and with_bounds:
+            # print(self.unnormalized_bounds)
+            for param, bounds in zip(self.get_params(), self.unnormalized_bounds):
+                # print(f"Checking parameter {param} is outside bounds {self.unnormalized_bounds[param]} with value {self.params[param]}. Penalising residual. {self.unnormalized_bounds[param][1]}")
+                if self.params[param] > self.unnormalized_bounds[param][1] or self.params[param] < self.unnormalized_bounds[param][0]:
+                    # print(f"Parameter {param} is outside bounds {self.unnormalized_bounds[param]} with value {self.params[param]}. Penalising residual.")
                     r = r * 1e10
 
                 # Prevent the RVs from being too close together. This can force bad results be careful.
@@ -448,6 +493,8 @@ class StellarModel:
                 h1, = axes[i].plot(self.wavelengths[mask], self.flux[mask], label='Observed Data')
                 h2, = axes[i].plot(self.wavelengths[mask], self.model_flux[mask], label='Model Fit', linestyle='--')
 
+                
+
                 # Model components
                 # h4, = axes[i].plot(self.wavelengths[mask], self.model_flux[mask] * self.params['f_contr'], label='Model Fit Primary', linestyle='--')
                 # h5, = axes[i].plot(self.wavelengths[mask], self.model_flux[mask] * (1 - self.params['f_contr']), label='Model Fit Primary', linestyle='--')
@@ -460,6 +507,9 @@ class StellarModel:
                 difference = abs(self.model_flux[mask] - self.flux[mask])
                 h3, = axes[i].plot(self.wavelengths[mask], difference, label='Model Delta', linestyle='--')
                 axes[i].fill_between(self.wavelengths[mask], 0, difference, color='gray', alpha=0.3)
+
+                clipped_flux = np.clip(self.flux, 0, 1)
+                h6, = axes[i].plot(self.wavelengths[mask], clipped_flux[mask], label='Clipped Data', linestyle='--', alpha=0.3)
 
                 # axes[i].set_ylim(np.min(self.flux[mask]) - 0.1, 1.2)
 
@@ -583,6 +633,40 @@ class StellarModel:
                 #     f.write(f"{self.id}, {self.get_residual()}, {self.get_rchi2()}, {params_list}\n")
 
 
+        else:
+            print('No data to plot')
+
+    # Plot a specific wavelength region of the spectra including the model, observed flux, and residual
+    def plot_window(self, min_wave, max_wave, title_text="", show_plot=True):
+        if self.wavelengths.size > 0 and self.flux.size > 0 and self.model_flux.size > 0:
+            # Select data within the specified wavelength range
+            mask = (self.wavelengths >= min_wave) & (self.wavelengths <= max_wave)
+
+            if not np.any(mask):
+                print("No data in the specified wavelength range.")
+                return
+
+            # Plot data
+            fig, ax = plt.subplots(figsize=(10, 5))
+            ax.scatter(self.wavelengths[mask], self.flux[mask], label='Observed Data', color='blue', s=2)
+            ax.plot(self.wavelengths[mask], self.flux[mask], lw=2, color='C0', alpha=0.7)
+            ax.scatter(self.wavelengths[mask], self.model_flux[mask], label='Model Fit', linestyle='--', color='orange', s=2)
+            residual = self.flux[mask] - self.model_flux[mask]
+            ax.plot(self.wavelengths[mask], residual, label='Residual', linestyle='--', color='green', lw=2)
+            ax.fill_between(self.wavelengths[mask], 0, residual, color='gray', alpha=0.3)
+
+            # Add labels and title
+            ax.set_xlabel('Wavelength (Å)')
+            ax.set_ylabel('Flux')
+            ax.set_title(f'Spectral Window Plot {title_text}')
+            ax.legend()
+
+            # Show or save the plot
+            if show_plot:
+                plt.show()
+            else:
+                plt.savefig(f'plots/2/window_{title_text}.png')
+                plt.close()
         else:
             print('No data to plot')
 

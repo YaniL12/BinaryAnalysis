@@ -40,17 +40,18 @@ def load_isochrones(type='', extended=False):
     global isochrone_interpolator
     working_directory = '/avatar/yanilach/PhD-Home/binaries_galah-main/spectrum_analysis/BinaryAnalysis/'
 
-    if extended:
-        fn = 'parsec_interpolator_extended.pkl'
+    if type == 'trilinear' and extended:
+        fn = 'parsec_isochrones_extended.fits'
     elif type == 'trilinear':
         fn = 'parsec_isochrones_reduced.fits'
     else:
         fn = 'parsec_interpolator_old.pkl'
 
-    # print(working_directory)
+    print("Attempting to load isochrone interpolator from file: ", fn)
+    print(working_directory)
     if os.path.exists(working_directory + 'assets/' + fn):
 
-        print("Isochrone interpolator found. Loading from file.")
+        print("Isochrone interpolator found. Loading from file. Using file: ", fn)
         if type == 'trilinear':
             print("Loading tri-linear interpolator.")
             isochrone_interpolator = Table.read(working_directory + 'assets/' + fn)
@@ -122,7 +123,31 @@ def create_interpolator(isochrone_table, age_range, m_h_range, mass_range):
 
     # Extract input (mass, logAge, m_h) and output (logT, logg, logL)
     parsec_points = np.array([isochrone_table_reduced['mini'], isochrone_table_reduced['logAge'], isochrone_table_reduced['m_h']]).T
-    parsec_values = np.array([isochrone_table_reduced['logT'], isochrone_table_reduced['logg'], isochrone_table_reduced['logL']]).T
+    parsec_values = np.array([isochrone_table_reduced['logT'], isochrone_table_reduced['logg'], isochrone_table_reduced['logL'], isochrone_table_reduced['mass']]).T
+
+    # cols = ['logT', 'logg', 'logL', 'mass']
+    cols = ['logT', 'logg', 'logL', 'Zini', 'Z', 'mass', 'label', 
+            'Gmag', 'GBPmag', 'GRPmag', 'Jmag', 'Hmag', 'Ksmag']
+
+
+    # numeric_cols = [col for col in isochrone_table_reduced.colnames 
+    #                 if np.issubdtype(isochrone_table_reduced[col].dtype, np.number)]
+    # mask = np.all(np.isfinite(np.column_stack([isochrone_table_reduced[col] for col in numeric_cols])), axis=1)
+
+    # parsec_points = parsec_points[mask]
+    parsec_values = np.column_stack([isochrone_table_reduced[col] for col in cols])
+
+
+    # First build a consistent mask over all columns
+    masked_cols = [isochrone_table_reduced[col] for col in cols]
+    numeric_mask = np.all(np.isfinite(np.column_stack(masked_cols)), axis=1)
+
+    # Then apply the mask *once* to both inputs and outputs
+    parsec_points = parsec_points[numeric_mask]
+    parsec_values = np.column_stack(masked_cols)[numeric_mask]
+
+    # parsec_values = np.array([isochrone_table_reduced[col] for col in isochrone_interpolator.colnames]).T
+    
 
     return LinearNDInterpolator(parsec_points, parsec_values)
 
@@ -146,6 +171,7 @@ def interpolate_isochrone(mass, age, m_h, int_type='trilinear'):
     if not isochrone_interpolator:
         isochrone_interpolator = load_isochrones(type=int_type)
 
+    print("Using af interpolation")
 
     if type(isochrone_interpolator) == Table:
         try:
@@ -169,14 +195,16 @@ def interpolate_isochrone(mass, age, m_h, int_type='trilinear'):
 
             # Prepare input and output for interpolation
             points = np.vstack([table_region['logAge'], table_region['m_h'], table_region['mini']]).T
-            values = np.vstack([table_region['logT'], table_region['logg'], table_region['logL']]).T  # 3-column output
+            values = np.vstack([table_region['logT'], table_region['logg'], table_region['logL'], table_region['mass'], table_region['Gmag']]).T  # 3-column output
+
 
             interp = LinearNDInterpolator(points, values)
 
             # Perform interpolation at query point
             query_point = np.array([age, m_h, mass])
 
-            teff, logg, logl = interp(query_point)[0]
+            teff, logg, logl, original_mass, gmag = interp(query_point)[0]
+
         
         except:
             print("Error in interpolation.")
@@ -194,13 +222,15 @@ def interpolate_isochrone(mass, age, m_h, int_type='trilinear'):
             mass, 
             # np.log10(age * 1e9), # Accepts log age (GYR)  * 1e9
             age,
-            m_h
+            m_h,
         )
     
     interpolated = {
         'teff': 10 ** teff,
         'logg': logg,
-        'logl': logl
+        'logl': logl,
+        'mass': original_mass,
+        'gmag': gmag
     }
 
     return interpolated

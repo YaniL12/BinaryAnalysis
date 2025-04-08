@@ -56,7 +56,7 @@ sys.path.append(os.path.join(working_directory, 'utils'))
 import AstroPandas as ap
 
 from scipy.interpolate import LinearNDInterpolator
-isochrone_table = Table.read('/avatar/yanilach/PhD-Home/binaries_galah-main/spectrum_analysis/BinaryAnalysis/' + 'assets/' + 'parsec_isochrones_reduced.fits')
+isochrone_table = Table.read('/avatar/yanilach/PhD-Home/binaries_galah-main/spectrum_analysis/BinaryAnalysis/' + 'assets/' + 'parsec_isochrones_extended.fits')
 isochrone_interpolator = af.load_isochrones(type='trilinear')
 
 sobject_id = int(sys.argv[1])
@@ -123,15 +123,15 @@ def fit_model(sobject_id):
     model = StellarModel(
                 id=sobject_id, 
                 labels = ['mass', 'rv', 'vmic', 'vsini'], 
-                # fixed_labels=['FeH'], # These are parameters that exist, but we don't fit for. They are used as is or are outputs of the interpolation?
+                derived_labels=['teff', 'logg', 'logl'], # These are parameters that exist, but we don't fit for. They are used as is or are outputs of the interpolation?
                 single_labels=['FeH', 'age'], # These are parameters that are the same for both components
                 interpolator='trilinear', 
+                isochrone_table=isochrone_table,
                 interpolate_flux=True,
                 same_fe_h=True
             ) # Flux can be used as a free parameter (False) or can be determined from luminosity ratios (from the isochrone) (True)
 
-    # model.bounds['f_contr'] = (0, 1)
-    model.bounds['f_contr'] = (0.2, 0.8)
+    model.bounds['f_contr'] = (0, 1)
 
     # Same bounds for both components. Overwrite with model.bounds['rv_1'] == x if required
     model.set_bounds('teff', (3, 8))
@@ -230,24 +230,27 @@ def fit_model(sobject_id):
     print("Initial parameters:")
     # print(model.params)
 
+
+
+    print("Initial bounds:")
+    print(model.bounds)
+    model.unnormalized_bounds = model.bounds
+
+    print("Unormalized bounds:")
+    print(model.unnormalized_bounds)
     # This is not just for the output: it sets the parameters in the model object for the intialisation. DO NOT REMOVE.
     model.interpolate()
     print(model.get_params(values_only=False, exclude_fixed=True))
     # print(model.fixed_labels)
-
-    print("Initial bounds:")
-    print(model.bounds)
-    model.unormalized_bounds = model.bounds
-
-    print("Unormalized bounds:")
-    print(model.unormalized_bounds)
 
     if len(model.get_params(values_only=True, exclude_fixed=True)) != len(model.bounds):
         print("Length of parameters and bounds do not match")
         # Print out which parameters don't have bounds
         for p in model.get_params(values_only=False, exclude_fixed=True):
             if p not in model.bounds:
-                print("Missing: ", p)
+                print("Missing bound: ", p)
+        print("Parameters: ", model.get_params(values_only=False, exclude_fixed=True))
+        print("Length of parameters and bounds mismatch", len(model.get_params(values_only=True, exclude_fixed=True)), len(model.bounds))
         return
     else:
         print("Length of parameters and bounds match", len(model.get_params(values_only=True, exclude_fixed=True)), len(model.bounds))
@@ -346,6 +349,7 @@ def fit_model(sobject_id):
 
     params_curve_fit = model.get_params(values_only=True)
     params_curve_fit_list = ', '.join(map(str, params_curve_fit))
+    curve_fit_rchi2 = model.get_rchi2(with_bounds=False)
 
     # Get the original parameter values and bounds
     original_params = model.get_params(values_only=True)# model_parameters_iter1 # model.get_params(values_only=True)
@@ -379,6 +383,13 @@ def fit_model(sobject_id):
         bounds[model.label('FeH')] = (max(bounds[model.label('FeH')][0], normalized_x0[model.label('FeH')] - 0.1), min(bounds[model.label('FeH')][1], normalized_x0[model.label('FeH')] + 0.1))
         bounds[model.label('mass', comp=1)] = (max(bounds[model.label('mass', comp=1)][0], normalized_x0[model.label('mass', comp=1)] - 0.1), min(bounds[model.label('mass', comp=1)][1], normalized_x0[model.label('mass', comp=1)] + 0.1))
 
+
+    # Override these bounds
+    bounds[model.label('f_contr')] = [0, 1]
+    bounds[model.label('teff', 1)] = [0, 1]
+    bounds[model.label('teff', 2)] = [0, 1]
+    bounds[model.label('logg', 1)] = [0, 1]
+    bounds[model.label('logg', 2)] = [0, 1]
     # Ensure these new bounds are also within the (0, 1) bounds
     bounds = [(max(0, lb), min(1, ub)) for lb, ub in bounds]
 
@@ -403,10 +414,10 @@ def fit_model(sobject_id):
     bounds_dict = {param: bound for param, bound in zip(model.get_params(values_only=False, exclude_fixed=True), bounds)}
     model.bounds = bounds_dict
     
-    unormalized_bounds_dict = {param: bound for param, bound in zip(model.get_params(values_only=False, exclude_fixed=True), unnormalized_bounds)}
-    model.unormalized_bounds = unormalized_bounds_dict
+    unnormalized_bounds_dict = {param: bound for param, bound in zip(model.get_params(values_only=False, exclude_fixed=True), unnormalized_bounds)}
+    model.unnormalized_bounds = unnormalized_bounds_dict
 
-    print(unnormalized_bounds, model.label('age'))
+    # print(unnormalized_bounds, model.label('age'))
     age_range = np.log10(np.array(unnormalized_bounds[model.label('age')]) * 1e9)
     m_h_range = unnormalized_bounds[model.label('FeH')]
     mass_range = unnormalized_bounds[model.label('mass', comp=1)]
@@ -513,6 +524,6 @@ def fit_model(sobject_id):
     params_list = ', '.join(map(str, params))
 
     total_time = time.time() - start_time
-    print(model.get_residual(), model.get_rchi2(with_bounds=False), params_list, params_curve_fit_list, total_time)
+    print(model.get_residual(), model.get_rchi2(with_bounds=False), params_list, curve_fit_rchi2, params_curve_fit_list, model.interpolate(return_values=True), total_time)
 
 fit_model(sobject_id)
