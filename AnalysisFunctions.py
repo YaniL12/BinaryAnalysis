@@ -120,6 +120,9 @@ def create_interpolator(isochrone_table, age_range, m_h_range, mass_range):
     
     if len(isochrone_table_reduced) < 100:  # Check if there are enough points for interpolation
         raise ValueError("Insufficient data points for interpolation.")
+    elif len(isochrone_table_reduced) > 60000:
+        print("Too many points for interpolation. Exiting.")
+        raise ValueError("Too many data points for interpolation.")
 
     # Extract input (mass, logAge, m_h) and output (logT, logg, logL)
     parsec_points = np.array([isochrone_table_reduced['mini'], isochrone_table_reduced['logAge'], isochrone_table_reduced['m_h']]).T
@@ -171,7 +174,7 @@ def interpolate_isochrone(mass, age, m_h, int_type='trilinear'):
     if not isochrone_interpolator:
         isochrone_interpolator = load_isochrones(type=int_type)
 
-    print("Using af interpolation")
+    # print("Using af interpolation")
 
     if type(isochrone_interpolator) == Table:
         try:

@@ -222,6 +222,15 @@ def fit_model(sobject_id):
     model.set_param('vmic', 1.5)
     model.set_param('vsini', 4.0)
 
+    # Clip all the parameters to be within the bounds of the model
+    for param in model.get_labels():
+        # print("Clipping parameter ", param, model.params[param], model.bounds[param])
+        # if param is not finite or param is None set to middle of the bounds
+        if not np.isfinite(model.params[param]) or model.params[param] is None:
+            model.params[param] = 1
+        
+        model.params[param] = np.clip(model.params[param], model.bounds[param][0], model.bounds[param][1])
+
     af.load_neural_network(spectrum)
     af.set_iterations(0)
     af.load_dr3_lines()
@@ -423,22 +432,47 @@ def fit_model(sobject_id):
     mass_range = unnormalized_bounds[model.label('mass', comp=1)]
 
     # Try creating the interpolator with the original range
-    try:
-        interpolator = af.create_interpolator(isochrone_table, age_range, m_h_range, mass_range)
-    except Exception as e:
-        print(f"Interpolator creation failed: {e}")
+    max_expansions = 10
+    expansion_count = 0
+    while expansion_count <= max_expansions:
+        try:
+            interpolator = af.create_interpolator(isochrone_table, age_range, m_h_range, mass_range)
+            print(f"Interpolator created successfully after {expansion_count} expansions.")
+            break
+        except Exception as e:
+            print(f"Interpolator creation failed on attempt {expansion_count + 1}: {e}")
+            # Expand age_range, m_h_range, and mass_range
+            if age_range[1] - age_range[0] < 1:
+                delta = 1 + expansion_count * 0.1
+                age_range = np.array([model.params['age'] - delta, model.params['age'] + delta])
+                age_range = np.log10(age_range * 1e9)
+                # Ensure the age range is within the bounds of the isochrone table
+                age_range = np.clip(age_range, isochrone_table['logAge'].min(), isochrone_table['logAge'].max())
+                print(f"Expanding age range bounds to attempt again. New age range: {age_range}")
+            else:
+                print("Age range is already sufficiently large, attempting again without further expansion.")
 
-        # If expansion is allowed, modify the age range and try again
-        if  age_range[1] - age_range[0] < 1:
-            age_range = np.array([model.params['age'] - 1, model.params['age'] + 1])
-            age_range = np.log10(age_range * 1e9)
-            print("Overriding age range bounds to expand isochrone table.")
+            delta = 0.1 + expansion_count * 0.1
+            if m_h_range[1] - m_h_range[0] < 0.5:
+                m_h_range = [m_h_range[0] - delta, m_h_range[1] + delta]
+                # Ensure the m_h range is within the bounds of the isochrone table
+                m_h_range = [max(m_h_range[0], isochrone_table['m_h'].min()), min(m_h_range[1], isochrone_table['m_h'].max())]
+                print(f"Expanding m_h range bounds to attempt again. New m_h range: {m_h_range}")
+            else:
+                print("m_h range is already sufficiently large, attempting again without further expansion.")
 
-            # Try again
-            try:
-                interpolator =  af.create_interpolator(isochrone_table, age_range, m_h_range, mass_range)
-            except Exception as e:
-                raise ValueError(f"Failed to create an interpolator, even after expanding age range: {e}")
+            if mass_range[1] - mass_range[0] < 0.5:
+                mass_range = [mass_range[0] - delta, mass_range[1] + delta]
+                # Ensure the mass range is within the bounds of the isochrone table
+                mass_range = [max(mass_range[0], isochrone_table['mini'].min()), min(mass_range[1], isochrone_table['mini'].max())]
+                print(f"Expanding mass range bounds to attempt again. New mass range: {mass_range}")
+            else:
+                print("Mass range is already sufficiently large, attempting again without further expansion.")
+
+            expansion_count += 1
+
+    if expansion_count > max_expansions:
+        raise ValueError(f"Failed to create an interpolator after {max_expansions} expansions.")
 
     print("Finished creating interpolator")
 
@@ -524,6 +558,10 @@ def fit_model(sobject_id):
     params_list = ', '.join(map(str, params))
 
     total_time = time.time() - start_time
-    print(model.get_residual(), model.get_rchi2(with_bounds=False), params_list, curve_fit_rchi2, params_curve_fit_list, model.interpolate(return_values=True), total_time)
+
+    interpolated_params = model.interpolate(return_values=True)
+    interpolated_params = ', '.join(map(str, interpolated_params[0])) + ', ' + ', '.join(map(str, interpolated_params[1]))
+
+    print(model.get_residual(), model.get_rchi2(with_bounds=False), params_list, curve_fit_rchi2, params_curve_fit_list, interpolated_params, total_time)
 
 fit_model(sobject_id)

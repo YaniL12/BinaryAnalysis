@@ -174,8 +174,8 @@ class StellarModel:
         # This interpolation function is used before the initial curve fit. This creates an interpolator and interpolates on the fly. 
         # Code is also stored within AnalysisFunctions.py.
         if self.interpolator == 'trilinear':
-            if return_values:
-                print("Using trilinear interpolation")
+            # if return_values:
+                # print("Using trilinear interpolation")
 
             age_query = np.log10(self.params['age'] * 1e9)
             m_h_query = self.params['FeH']
@@ -204,8 +204,8 @@ class StellarModel:
         # This has reduced bounds and should be faster.
         elif self.interpolator is not None:
             # print("Cached interpolation.")
-            if return_values:
-                print("Using internal interpolation")
+            # if return_values:
+                # print("Using internal interpolation")
 
             # if all(label in self.unique_labels for label in ['mass', 'age']) and all(label in self.fixed_labels for label in ['FeH']):
                 # Both components will have the same starting values.
