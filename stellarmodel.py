@@ -1,22 +1,31 @@
 import numpy as np
 import matplotlib.pyplot as plt
+from scipy.signal import find_peaks
 import AnalysisFunctions as af
 from pandas import DataFrame
 from pandas import Series as Series
 import time
+import os
 important_lines, important_molecules = af.load_dr3_lines()
+from astropy.table import Table
+
+import sys
+working_directory = '/avatar/yanilach/PhD-Home/binaries_galah-main/spectrum_analysis/BinaryAnalysis'
+sys.path.append(os.path.join(working_directory, 'utils'))
+import AstroPandas as ap
 
 class StellarModel:
     interpolator = None
 
     # Constructor with default labels and components. Override for custom labels and components
-    def __init__(self, id="No ID", labels = ['rv', 'teff', 'logg', 'FeH', 'vmic', 'vsini'], derived_labels=[], fixed_labels=[], single_labels=[], components = 2, same_fe_h=False, interpolator=None, interpolate_flux=False, original_bounds=None, isochrone_table=None):
+    def __init__(self, id="No ID", labels = ['rv', 'teff', 'logg', 'FeH', 'vmic', 'vsini'], derived_labels=[], fixed_labels=[], single_labels=[], components = 2, same_fe_h=False, interpolator=None, interpolate_flux=False, original_bounds=None, isochrone_table=None, load_from_results=False):
 
     # Dictionaries for labels, bounds, and initial values
     # These should be instance level variables not class level. Otherwise they will be shared between all instances.
         self.id = id
         self.components = components
         self.same_fe_h = same_fe_h
+        self.spectrum = None
 
         self.model_labels = {}
         self.derived_labels = derived_labels
@@ -31,6 +40,7 @@ class StellarModel:
         self.unique_indices = {}
         self.wavelengths = []
         self.flux = []
+        self.flux_uncertainty = []
         self.model_flux = []
         self.component_model_fluxes = {}
 
@@ -93,6 +103,52 @@ class StellarModel:
         self.param_data = {key: [] for key in self.params.keys()}
         self.param_data['residual'] = []
 
+
+        galah_dr4_directory = '/avatar/buder/GALAH_DR4/'
+        dir = galah_dr4_directory + 'analysis_products_allstar/' + str(self.id)[:6] + '/' + str(self.id) + '/' + str(self.id) + '_allstar_fit_spectrum.fits'
+        dir2 = galah_dr4_directory + 'analysis_products_single/' + str(self.id)[:6] + '/' + str(self.id) + '/' + str(self.id) + '_single_fit_spectrum.fits'
+        dir3 = galah_dr4_directory + 'analysis_products_binary/' + str(self.id)[:6] + '/' + str(self.id) + '/' + str(self.id) + '_binary_fit_spectrum.fits'
+
+        try:
+            if os.path.exists(dir):
+                fits_file = ap.FitsToDFWithVariableLengthCols(dir)
+                fits_file = fits_file[0]
+            elif os.path.exists(dir2):
+                fits_file = ap.FitsToDFWithVariableLengthCols(dir2)
+                fits_file = fits_file[0]
+                print("Succsefully found file for object at analysis_products_single: " + dir2)
+            elif os.path.exists(dir3):
+                fits_file = ap.FitsToDFWithVariableLengthCols(dir3)
+                fits_file = fits_file[0]
+                print("Succsefully found file for object at analysis_products_binary: " + dir3)
+            else:
+                print("File not found: ", dir)
+                raise FileNotFoundError(f"File not found: {dir}")
+        except:
+            print("No file found for spectra ", dir)
+
+        self.flux_uncertainty = fits_file['uob'].values
+        self.model_flux_single = fits_file['smod'].values
+        self.wavelengths_single = fits_file['wave'].values
+
+        self.rchi2_single = np.median(np.abs(fits_file['sob'] - self.model_flux_single)/ self.flux_uncertainty)
+
+        # Load in spectral data. e.g. wavelengths, flux, and model flux.
+        self.spectrum = af.read_spectrum(self.id)
+        # May need to remove this if loading in data manually from a result file.
+        if not load_from_results:
+            self.generate_model()
+
+        # Flux uncertainty may be slightly different in length from the model flux by a few points.
+        # Interpolate the flux uncertainty to match the model flux
+        print("Lenght of wavelengths: ", len(self.wavelengths))
+        if self.wavelengths is not None and len(self.wavelengths) > 0:
+            print("Interpolating flux uncertainty to match model flux")
+            self.flux_uncertainty = np.interp(self.wavelengths, self.wavelengths_single, self.flux_uncertainty)
+            # Need this for the CCF plotting.
+            self.model_flux_single_original = self.model_flux_single
+            self.model_flux_single = np.interp(self.wavelengths, self.wavelengths_single, self.model_flux_single)
+
     def save_data(self):
         for i, param in enumerate(self.params):
             self.param_data[param].append(self.params[param])
@@ -110,26 +166,29 @@ class StellarModel:
                 print("ID not found in data. Check the ID you passed matches the model ID")
                 return
             for col in data.columns:
+                # print("Checking col: ", col)
                 # If col exists in the model.params, set the value
-                if col in self.get_labels():
+                if col in self.get_labels() or col in self.derived_labels:
+                    # print("Setting param: ", col, " to ", row[col].iloc[0])
                     self.params[col] = row[col].iloc[0]
 
             #Note we requre this as we interpolate for M = m - 0.1. REMOVE IF WE CHANGE THE OUTPUT FROM THE ANALYSIS!
             self.params['mass_1'] += 0.1
             self.params['mass_2'] += 0.1
 
+            # self.params['age'] = 10 ** self.params['age'] / 1e9
+
             # Check for missing parameters that have not been set
-            for col in self.get_labels():
+            for col in self.get_labels() or col in self.derived_labels:
                 if col not in data.columns:
                     print("Missing parameter: ", col)
                     # Raise an error
                     raise ValueError("Missing parameter: " + col + ". Please check the data you passed to the model is the original data table, for example not a merged table where parameters have prefixes.")
             
-            spectrum = af.read_spectrum(self.id)
-            af.load_neural_network(spectrum)
+            af.load_neural_network(self.spectrum)
             
-            # print("Generating model")
-            self.generate_model(spectrum)
+            print("Generating model")
+            self.generate_model()
 
         elif isinstance(data, Series):
             for col in data.keys():
@@ -138,15 +197,22 @@ class StellarModel:
                     # print(col, data[col])
                     self.params[col] = data[col]
             # print(self.params)
-            spectrum = af.read_spectrum(self.id)
-            af.load_neural_network(spectrum)
-            self.generate_model(spectrum)
+            af.load_neural_network(self.spectrum)
+            self.generate_model()
+
+        if self.wavelengths is not None and len(self.wavelengths) > 0:
+            print("Interpolating flux uncertainty to match model flux")
+            self.flux_uncertainty = np.interp(self.wavelengths, self.wavelengths_single, self.flux_uncertainty)
+            # Need this for the CCF plotting.
+            self.model_flux_single_original = self.model_flux_single
+            self.model_flux_single = np.interp(self.wavelengths, self.wavelengths_single, self.model_flux_single)
 
     # Call this if we have modified one or more parameters manually. This will update the model flux.
     # Effectively a load data call, without loadiing paramaters.
     def regenerate_spectrum(self):
         spectrum = af.read_spectrum(self.id)
-        self.generate_model(spectrum)
+        self.generate_model()
+        self.spectrum = spectrum
 
     # def generate_interpolator(self):
         # age_range = np.log10(np.array(self.unnormalized_bounds['age']) * 1e9)
@@ -398,8 +464,8 @@ class StellarModel:
             if param not in self.fixed_labels:
                 self.bounds[param + '_' + str(i+1)] = (-1e10, 1e10)
 
-    def generate_model(self, spectrum):
-        self.wavelengths, self.flux, sigma2_iter1, self.model_flux, unmasked_iter1 = af.return_wave_data_sigma_model(self, spectrum, self.same_fe_h) 
+    def generate_model(self):
+        self.wavelengths, self.flux, sigma, self.model_flux, unmasked_iter1 = af.return_wave_data_sigma_model(self, self.spectrum, self.same_fe_h) 
         
     def get_residual(self):
         clipped_flux = np.clip(self.flux, 0, 1)
@@ -407,14 +473,77 @@ class StellarModel:
 
         return r
     
+    # def get_rchi2(self, with_bounds=True, clipped=True):
+    #     # Manual bound checking for interpolated values
+    #     if clipped:
+    #         clipped_flux = np.clip(self.flux, 0, 1)
+    #     else:
+    #         clipped_flux = self.flux
+
+    #     r = np.sum((self.model_flux - clipped_flux) ** 2) / (len(clipped_flux) - len(self.params))
+
+    #     # Manual band enforcement for all parameters
+    #     if self.unnormalized_bounds and with_bounds:
+    #         # print(self.unnormalized_bounds)
+    #         for param, bounds in zip(self.get_params(), self.unnormalized_bounds):
+    #             # print(f"Checking parameter {param} is outside bounds {self.unnormalized_bounds[param]} with value {self.params[param]}. Penalising residual. {self.unnormalized_bounds[param][1]}")
+    #             if self.params[param] > self.unnormalized_bounds[param][1] or self.params[param] < self.unnormalized_bounds[param][0]:
+    #                 # print(f"Parameter {param} is outside bounds {self.unnormalized_bounds[param]} with value {self.params[param]}. Penalising residual.")
+    #                 r = r * 1e10
+
+    #             # Prevent the RVs from being too close together. This can force bad results be careful.
+    #         # if abs(self.params['rv_1'] - self.params['rv_2']) < 60:
+    #         #     r = r * 1e10
+
+    #     return r
+    
+    # New implementation of rchi2 via Perplexity
+
     def get_rchi2(self, with_bounds=True, clipped=True):
-        # Manual bound checking for interpolated values
-        if clipped:
-            clipped_flux = np.clip(self.flux, 0, 1)
+        # Clip flux values if requested
+        if clipped == True:
+            clipped_flux = np.clip(self.flux, 0, 1.001)
+        # Else check if clipped is numerical
+        elif isinstance(clipped, (int, float)):
+            clipped_flux = np.clip(self.flux, 0, clipped)
         else:
             clipped_flux = self.flux
 
-        r = np.sum((self.model_flux - clipped_flux) ** 2) / (len(clipped_flux) - len(self.params))
+        # # Calculate residuals (model - observed)
+        # residuals = self.model_flux - clipped_flux
+
+        # # Check for valid uncertainties
+        # if not hasattr(self, 'flux_uncertainty') or self.flux_uncertainty is None:
+        #     raise ValueError("Uncertainty array must be defined for χ² calculation")
+
+        # # Mask points with invalid uncertainties (<=0)
+        # valid_mask = self.flux_uncertainty > 0
+        # residuals = residuals[valid_mask]
+        # uncertainty = np.sqrt(self.flux_uncertainty[valid_mask])
+
+        # # Compute χ² and reduced χ²
+        # chi2 = np.sum((residuals / uncertainty) ** 2)
+        # n_data = len(residuals)
+        # n_params = len(self.params)
+        # dof = n_data - n_params
+        
+        # # Degrees of freedom (DoF) should be positive
+        # if dof <= 0:
+        #     return np.inf  # Avoid division by zero/negative DoF
+        # rchi2 = chi2 / dof
+
+
+        # rchi2_single = np.median(np.abs(self.flux - self.model_flux_single)/ self.flux_uncertainty)
+        # rchi2 = np.median(np.abs(self.flux - self.model_flux)/ self.flux_uncertainty)
+
+        # rchi2 = np.median(np.abs(clipped_flux - self.model_flux)/ np.sqrt(self.flux_uncertainty)) # Take sqrt if using model unc
+        # Print length of each array
+        # print("Length of clipped flux: ", len(clipped_flux))
+        # print("Length of model flux: ", len(self.model_flux))
+        # print("Length of flux uncertainty: ", len(self.flux_uncertainty))
+        # print("Length of interp ", len(np.interp(self.wavelengths, self.wavelengths_single, self.flux_uncertainty)))
+        rchi2 = np.median(np.abs(clipped_flux - self.model_flux)/ self.flux_uncertainty)
+
 
         # Manual band enforcement for all parameters
         if self.unnormalized_bounds and with_bounds:
@@ -423,13 +552,9 @@ class StellarModel:
                 # print(f"Checking parameter {param} is outside bounds {self.unnormalized_bounds[param]} with value {self.params[param]}. Penalising residual. {self.unnormalized_bounds[param][1]}")
                 if self.params[param] > self.unnormalized_bounds[param][1] or self.params[param] < self.unnormalized_bounds[param][0]:
                     # print(f"Parameter {param} is outside bounds {self.unnormalized_bounds[param]} with value {self.params[param]}. Penalising residual.")
-                    r = r * 1e10
+                    rchi2 *= 1e10
 
-                # Prevent the RVs from being too close together. This can force bad results be careful.
-            # if abs(self.params['rv_1'] - self.params['rv_2']) < 60:
-            #     r = r * 1e10
-
-        return r
+        return rchi2
 
     def plot(self, title_text="", lines=None, line_buffer=3, no_lines=5, random_lines=False, component_fluxes=False, component_offset=0, vlines=True, show_plot=True):
         global important_lines
@@ -574,16 +699,16 @@ class StellarModel:
 
             # model_agreement_percentage = model_agreement_percentage ** 2
             model_rchi = self.get_rchi2()
-            model_rchi = 1e3 * model_rchi
+            # model_rchi = 1e3 * model_rchi
             
             if self.interpolator is not None:
                 title = "ID: " + str(self.id) + \
                     "   Agreement: " + str(model_agreement_percentage) + "%" \
-                    "   $r\\chi^{2} 10^{3}$: " + str(round(model_rchi, 6))
+                    "   $\\chi^{2}$: " + str(round(model_rchi, 6))
             else:
                 title = "ID: " + str(self.id) + \
                     "   Agreement: " + str(round(model_agreement_percentage, 4)) + "%" \
-                    "   $r\\chi^{2} 10^{3}$: " + str(round(model_rchi, 6))
+                    "   $\\chi^{2}$: " + str(round(model_rchi, 6))
             
             title = title + " " + title_text
             plt.suptitle(title)
@@ -757,3 +882,361 @@ class StellarModel:
         plt.show()
 
         return bin_centers, binned_residuals
+
+    def plot_spectrum(self, mask=None, plot_width=None, show_lines=False):
+        # Define the wavelength mask if not provided
+        if mask is None:
+            mask = (self.wavelengths >= 5708) & (self.wavelengths <= 5718)
+        else:
+            mask = (self.wavelengths >= mask[0]) & (self.wavelengths <= mask[1])
+
+        masked_wavelengths = self.wavelengths[mask]
+        masked_flux = self.flux[mask]
+        masked_flux_uncertainty = self.flux_uncertainty[mask]
+
+        if len(masked_wavelengths) == 0:
+            print("No data in the specified wavelength range.")
+            return
+
+        plt.rcParams.update({'font.size': 20})
+        fig_size = min(2 * (max(masked_wavelengths) - min(masked_wavelengths)), 20)
+        fig_size = max(20, fig_size)
+        if plot_width is not None:
+            fig_size = plot_width
+
+        plt.figure(figsize=(fig_size, 4))
+        plt.title(f"Observed Spectrum for {self.id}")
+
+        # Plot the spectrum with error bars
+        plt.fill_between(masked_wavelengths, masked_flux - masked_flux_uncertainty, masked_flux + masked_flux_uncertainty, color='gray', alpha=0.1)
+        plt.errorbar(masked_wavelengths, masked_flux, yerr=masked_flux_uncertainty, fmt='none', ecolor='black', elinewidth=2, capsize=3, alpha=0.4)
+        plt.plot(masked_wavelengths, masked_flux, label='Observed Spectrum', color='black', lw=2, alpha=0.8)
+
+        plt.xlabel('Wavelength (Å)')
+        plt.ylabel('Flux')
+        plt.ylim(min(masked_flux) - 0.2, 1.08)
+
+        if show_lines:
+            # Detect lines within 5 angstrom of the center of the mask from important lines
+            lines = [line for line in important_lines if abs(line[0] - np.mean(masked_wavelengths)) < 5]
+
+            # For each line, find the closest wavelength in the spectrum and its flux
+            lines_with_depth = []
+            if len(lines) > 0:
+                for line in lines:
+                    shifted_line = af.rv_shift(self.params['rv_1'] - self.params['rv_1'], line[0])
+                    idx = np.abs(masked_wavelengths - shifted_line).argmin()
+                    line_flux = masked_flux[idx]
+                    depth = 1 - line_flux  # or continuum - line_flux if not normalized
+                    lines_with_depth.append((line, depth))
+
+            if len(lines_with_depth) > 0:
+                # Get the line with the largest depth
+                deepest_line, max_depth = max(lines_with_depth, key=lambda x: x[1])
+                lines = [deepest_line]
+
+                # Plot the lines
+                for i, line in enumerate(lines):
+                    shifted_line = af.rv_shift(self.params['rv_1'] - self.params['rv_1'], line[0])
+                    
+                    if min(masked_wavelengths) <= shifted_line <= max(masked_wavelengths):
+                        plt.axvline(x=shifted_line, color='darkred', linestyle='--')
+
+                    shifted_line_2 = af.rv_shift(self.params['rv_1'] - self.params['rv_2'], line[0])
+                    if min(masked_wavelengths) <= shifted_line_2 <= max(masked_wavelengths):
+                        plt.axvline(x=shifted_line_2, color='darkblue', linestyle='--')
+
+                    # Draw a horizontal line between the two lines
+                    y_connector = 0.90
+                    plt.plot(
+                        [shifted_line, shifted_line_2], [y_connector, y_connector],
+                        color='black', linestyle='--', lw=1
+                    )
+
+                    midpoint_x = (shifted_line + shifted_line_2) / 2
+                    # Annotate above the horizontal connector
+                    plt.text(
+                        midpoint_x, y_connector + 0.05,  # 0.03 above the connector line
+                        f'{line[1]} ({round(line[0])} Å)', 
+                        color='black', 
+                        ha='center',  # Center horizontally
+                        va='bottom',  # Align text baseline to bottom of text
+                        bbox=dict(facecolor='white', edgecolor='black', boxstyle='round, pad=0.3'),
+                        fontsize=10
+                    )
+
+                    # Add a vertical line between the midpoint and the textbox
+                    plt.plot(
+                        [midpoint_x, midpoint_x], [y_connector, y_connector + 0.05],
+                        color='black', linestyle='--', lw=1
+                    )
+
+        plt.xticks(np.arange(min(masked_wavelengths), max(masked_wavelengths)+1, 4))
+
+        plt.legend(loc='lower right', fontsize=16, frameon=True)
+        plt.show()
+
+    # Compare the single star and binary fit plots
+    def plot_comparison(self, mask=None, show_lines=False, show_lines_comp=False, plot_width=None):
+        if mask is None:
+            mask = (self.wavelengths >= 5708) & (self.wavelengths <= 5718)
+            # Oxygen triplet
+            mask = (self.wavelengths >= 7770) & (self.wavelengths <= 7780)
+            # H Alpha
+            # mask = (self.wavelengths >= 6552) & (self.wavelengths <= 6572)
+        else:
+            mask = (self.wavelengths >= mask[0]) & (self.wavelengths <= mask[1])
+        
+        # same_fe_h = False
+        file = '/avatar/buder/GALAH_DR4/analysis_products_single/'+str(self.id)[:6]+'/'+str(self.id)+'/'+str(self.id)+'_single_fit_results.fits'
+        global single_results
+        try:
+            single_results = Table.read(file)
+        except:
+            print('Single results not available')
+            return
+
+        # Apply the mask to the wavelengths and flux
+        masked_wavelengths = self.wavelengths[mask]
+        masked_flux = self.flux[mask]
+        masked_model_flux = self.model_flux[mask]
+
+        # Check if we have any values within the masked wavelengths
+        if len(masked_wavelengths) == 0:
+            print("No data in the specified wavelength range.")
+            return
+
+        # Flux uncertainty may be slightly different in length from the model flux by a few points.
+        # Interpolate the flux uncertainty to match the model flux
+        masked_flux_uncertainty = self.flux_uncertainty[mask]
+        # = np.interp(self.wavelengths, self.wavelengths_single, self.flux_uncertainty)
+
+        # rchi2_single = np.median(np.abs(self.flux - self.model_flux_single)/ self.flux_uncertainty)
+        # rchi2 = np.median(np.abs(self.flux - self.model_flux)/ self.flux_uncertainty)
+
+        rchi2_single = self.rchi2_single
+        rchi2 = self.get_rchi2()
+        
+
+
+        # Font size increase
+        plt.rcParams.update({'font.size': 20})
+        fig_size = min(2 * (max(masked_wavelengths) - min(masked_wavelengths)), 20)
+        fig_size = max(20, fig_size)
+
+        if plot_width is not None:
+            fig_size = plot_width
+
+        plt.figure(figsize=(fig_size, 4))
+        plt.title(f"Binary and Single Star Fits for {self.id}")
+        # Fill between the error bars
+        plt.fill_between(masked_wavelengths, masked_flux - masked_flux_uncertainty, masked_flux + masked_flux_uncertainty, color='gray', alpha=0.1)
+        plt.errorbar(masked_wavelengths, masked_flux, yerr=masked_flux_uncertainty, fmt='none', ecolor='black', elinewidth=2, capsize=3, label='Observed Spectra', alpha=0.7)
+
+        plt.plot(masked_wavelengths, masked_model_flux, label=f"Binary {round(self.params['rv_1'])} km$s^{{-1}}$ & {round(self.params['rv_2'])} km$s^{{-1}}$", color='darkblue', lw=2, alpha=0.7)
+        plt.plot(masked_wavelengths, self.model_flux_single[mask], label=f"Single {round(single_results['rv_gauss'][0])}  km$s^{{-1}}$", color='darkred', lw=2, alpha=0.7)
+        # Annotate the chi2 values in the bottom left corner
+        plt.text(0.02, 0.2, f"$\\chi^{2}$: {rchi2:.2f}", transform=plt.gca().transAxes, fontsize=14, verticalalignment='top',color='darkblue')
+        plt.text(0.02, 0.1, f"$\\chi^{2}$: {rchi2_single:.2f}", transform=plt.gca().transAxes, fontsize=14, verticalalignment='top', color='darkred')
+        plt.xlabel('Wavelength (Å)')
+        plt.ylabel('Flux')
+
+        plt.ylim(min(min(masked_flux), min(masked_model_flux), min(self.model_flux_single[mask])) - 0.2, 1.08)
+    
+        if show_lines:
+            # Detect lines within 5 angstrom of the center of the mask from important lines
+            lines = [line for line in important_lines if abs(line[0] - np.mean(masked_wavelengths)) < 5]
+
+            # For each line, find the closest wavelength in the spectrum and its flux
+            lines_with_depth = []
+            if len(lines) > 0:
+                for line in lines:
+                    shifted_line = af.rv_shift(self.params['rv_1'] - self.params['rv_1'], line[0])
+                    idx = np.abs(masked_wavelengths - shifted_line).argmin()
+                    line_flux = masked_flux[idx]
+                    depth = 1 - line_flux  # or continuum - line_flux if not normalized
+                    lines_with_depth.append((line, depth))
+
+            if len(lines_with_depth) > 0:
+                # Get the line with the largest depth
+                deepest_line, max_depth = max(lines_with_depth, key=lambda x: x[1])
+                lines = [deepest_line]
+
+                # Plot the lines
+                for i, line in enumerate(lines):
+                    shifted_line = af.rv_shift(self.params['rv_1'] - self.params['rv_1'], line[0])
+                    
+                    if min(masked_wavelengths) <= shifted_line <= max(masked_wavelengths):
+                        plt.axvline(x=shifted_line, color='darkred', linestyle='--')
+                        # Annotate at 80% of y-axis range
+                        # y_pos = 1.05 * (plt.ylim()[1] - plt.ylim()[0]) + plt.ylim()[0]
+                        # plt.text(shifted_line + 0.2, 1.05,  s=f'{line[1]} ({round(line[0])} Å)', color='darkred', 
+                        #         bbox=dict(facecolor='white', edgecolor='none', boxstyle='round, pad=0.3'))
+
+                    if show_lines_comp == 1:
+                        continue
+                    shifted_line_2 = af.rv_shift(self.params['rv_1'] - self.params['rv_2'], line[0])
+                    if min(masked_wavelengths) <= shifted_line_2 <= max(masked_wavelengths):
+                        plt.axvline(x=shifted_line_2, color='darkblue', linestyle='--')
+                        # Annotate at 80% of y-axis range
+                        
+                        # y_pos = 1.01 * (plt.ylim()[1] - plt.ylim()[0]) + plt.ylim()[0]
+                        # plt.text(shifted_line_2 + 0.2, 1.03, s=f'{line[2]} ({round(line[0])} Å)', color='darkblue', 
+                        #         bbox=dict(facecolor='white', edgecolor='none', boxstyle='round, pad=0.3'))
+                        
+                    # Draw a horizontal line between the two lines
+                    y_connector = plt.ylim()[1] + 0.1 + (i * 0.05) * (plt.ylim()[1] - plt.ylim()[0])
+                    plt.plot(
+                        [shifted_line, shifted_line_2], [y_connector, y_connector],
+                        color='black', linestyle='--', lw=1
+                    )
+
+                    midpoint_x = (shifted_line + shifted_line_2) / 2
+                    # Annotate above the horizontal connector
+                    plt.text(
+                        midpoint_x, y_connector + 0.05,  # 0.03 above the connector line
+                        f'{line[1]} ({round(line[0])} Å)', 
+                        color='black', 
+                        ha='center',  # Center horizontally
+                        va='bottom',  # Align text baseline to bottom of text
+                        bbox=dict(facecolor='white', edgecolor='black', boxstyle='round, pad=0.3'),
+                        fontsize=10
+                    )
+
+                    # Add a vertical line between the midpoint and the textbox
+                    plt.plot(
+                        [midpoint_x, midpoint_x], [y_connector, y_connector + 0.05],
+                        color='black', linestyle='--', lw=1
+                    )
+
+            plt.ylim(plt.ylim()[0], plt.ylim()[1] + 0.5)
+
+        # Annotate the flux ratio
+        plt.text(0.02, 0.3, f"Flux Ratio: {round(self.params['f_contr'], 2)}", transform=plt.gca().transAxes, fontsize=16, verticalalignment='top', color='black', alpha=0.9)
+        plt.legend(loc='lower right', fontsize=16, frameon=True)
+        # plt.savefig(f'comparison_{self.id}.pdf', bbox_inches='tight', dpi=300)
+        plt.show()
+
+
+    def CrossCorrelate(self, shift_range=np.arange(-1000,1000),  normalise=False):
+
+        rv_1 = self.params['rv_1']
+
+        # Define the range of shifts
+        shift_range = np.arange(-1200, 1200).astype(np.float64)
+
+        # wavelengths = np.array(self.wavelengths_single) #+ rv_1 # Wavelengths
+        # flux_model = self.model_flux_single
+        # flux_obs = self.flux
+
+        # # Initialize an array to store cross-correlation results for each shift
+        cross_corr_results = np.zeros_like(shift_range, dtype=float)
+
+        deltas = np.zeros_like(shift_range, dtype=float)
+        # # Step 3: Calculate the cross-correlation for each shift
+        # for i, shift in enumerate(shift_range):
+        #     # Translate the model spectrum by the current shift
+        #     shifted_wavelengths = af.rv_shift(shift, wavelengths)
+
+        #     # # Calculate the flux at the new RV value
+        #     # flux_at_shifted = np.interp(wavelengths, shifted_wavelengths, self.model_flux_single_original)
+
+        #     # # Ensure we only consider where flux_obs and flux_at_shifted overlap. flux_obs can be shorter than flux_at_shifted
+        #     # mask = np.isfinite(flux_obs) & np.isfinite(flux_at_shifted)
+        #     # flux_at_shifted = flux_at_shifted[0:len(flux_obs)]
+            
+        #     # # Calculate sum difference between observed and shifted modelled flux
+        #     # delta = 1/np.sum((flux_obs - flux_at_shifted) ** 2)
+        #     # deltas[i] = delta
+
+
+        wavelengths_obs = self.wavelengths  # grid for observed flux
+        flux_obs = self.flux
+
+        wavelengths_model = self.wavelengths_single  # grid for the model
+        model_flux = self.model_flux_single_original
+
+        for i, shift in enumerate(shift_range):
+            shifted_wavelengths = af.rv_shift(shift, wavelengths_model)
+            # Interpolate model onto observed grid
+            flux_at_shifted = np.interp(wavelengths_obs, shifted_wavelengths, model_flux)
+            # Now both arrays are on the observed grid
+            mask = np.isfinite(flux_obs) & np.isfinite(flux_at_shifted)
+            flux_obs_masked = flux_obs[mask]
+            flux_at_shifted_masked = flux_at_shifted[mask]
+
+
+            # Calculate sum difference between observed and shifted modelled flux
+            delta = 1/np.sum((flux_obs - flux_at_shifted) ** 2)
+            deltas[i] = delta
+
+
+        # Step 4: Find the best fit shift
+        if normalise:
+            deltas = deltas / np.max(deltas)
+            
+        # TODO fit a gaussian instead for the accurate RVs.jpg
+        best_fit_index = np.argmax(deltas)
+        highest_peak = deltas[best_fit_index]
+        # best_fit_shift = shift_range[best_fit_index]
+
+
+        # print(deltas)
+        # find_peaks returns the indices of the peaks.
+        peaks, _ = find_peaks(deltas, prominence=highest_peak * 0.1, height=highest_peak * 0.1)  # Negate deltas as find_peaks looks for valleys
+        peaks_d1, _ = find_peaks(np.gradient(np.abs(deltas)), prominence=highest_peak * 0.1, height=highest_peak * 0.1)  # Negate deltas as find_peaks looks for valleys
+        peaks_d2, _ = find_peaks(np.gradient(np.gradient(np.abs(deltas))), prominence=highest_peak * 0.1, height=highest_peak * 0.1)  # Negate deltas as find_peaks looks for valleys
+        peaks_d3, _ = find_peaks(np.gradient(np.gradient(np.gradient(np.abs(deltas)))), prominence=highest_peak * 0.1, height=highest_peak * 0.1)  # Negate deltas as find_peaks looks for valleys
+
+        global single_results
+        # The model has already been shifted by the original RV found for this star to match the data. (A shift of 0 will be the best fit, as the model data has already been shifted when imported here).
+        # We need to shift the model by the original RV found, to determine the absolute RV for two stars, otherwise we get relative shifts
+        shift_range += single_results['rv_gauss'][0] 
+
+
+        peak_array = [peaks, peaks_d1, peaks_d2, peaks_d3]
+
+        RVs = shift_range
+        # After finding peaks:
+        absolute_RVs = rv_1 + shift_range[peaks] - shift_range[peaks[0]]
+        RVs = rv_1 + shift_range - shift_range[peaks[0]]
+
+
+        annotate_fs = 11
+        plt.figure(figsize=(20, 4))
+        plt.plot(RVs, deltas, label='Cross-Correlation Function', c='black')  # Optionally plot in absolute RV
+        plt.scatter(absolute_RVs, deltas[peaks], marker="x", color='red', s=150, label='CCF Peaks')
+        for i, peak in enumerate(peaks):
+            plt.axvline(x=absolute_RVs[i], c='red', ls='dashed', label=f'CCF RV$_{i+1}$', zorder=1)
+            plt.annotate(f'CCF RV$_{i+1}$: {absolute_RVs[i]:.0f}', (absolute_RVs[i] + 2, np.max(deltas) * 1.3 * 0.75), textcoords="offset points", xytext=(0,10), ha='center', fontsize=annotate_fs,
+            bbox=dict(facecolor='white', edgecolor='none', boxstyle='round,pad=0.5', alpha=0.6), rotation=90)
+
+        plt.axvline(x=single_results['rv_gauss'][0], c='black', ls='dotted', label='GALAH RV$_1$')
+        plt.annotate(f'GALAH RV$_1$: {single_results["rv_gauss"][0]:.0f}', (single_results['rv_gauss'][0] + 2, 0), textcoords="offset points", xytext=(0,10), ha='center', fontsize=annotate_fs,
+            bbox=dict(facecolor='white', edgecolor='none', boxstyle='round,pad=0.5', alpha=0.6), rotation=90)
+
+        for i, PSO_rv in enumerate([self.params['rv_1'], self.params['rv_2']]):
+            if abs(PSO_rv - absolute_RVs[0]) > 10:
+                plt.axvline(x=PSO_rv, c='darkred', ls='dashdot', label=f'PSO RV$_{i+1}$')
+            else:
+                plt.axvline(x=PSO_rv, c='darkred', ls='dashdot', label=f'PSO RV$_{i+1}$', zorder=0)
+
+            plt.annotate(f'RV$_{i+1}$: {PSO_rv:.0f}', (PSO_rv + 2, 0), textcoords="offset points", xytext=(0,10), ha='center', fontsize=annotate_fs,
+            bbox=dict(facecolor='white', edgecolor='none', boxstyle='round,pad=0.5', alpha=0.7), rotation=90)
+
+        plt.xlabel('Radial Velocity (km/s)')
+        plt.ylabel('Cross-Correlation Value')
+        plt.title('Cross-Correlation Function and Radial Velocity Peaks')
+        plt.legend(loc='upper right', fontsize=12)
+
+        plt.xlim(-250 + rv_1, 250 + rv_1)
+
+        min_peak = np.min([self.params['rv_1'], self.params['rv_2']])
+        max_peak = np.max([self.params['rv_1'], self.params['rv_2']])
+        plt.xlim(min_peak - 50, max_peak + 50)
+
+        plt.ylim(0, np.max(deltas) * 1.6)
+        plt.savefig(f'cross_correlation_{self.id}.pdf', bbox_inches='tight', dpi=300)
+        plt.show()
+
+        return peaks, shift_range, deltas

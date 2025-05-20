@@ -65,6 +65,7 @@ labels_interp =  ['f_contr', 'mass_1', 'rv_1', 'vmic_1', 'vsini_1', 'mass_2', 'r
 
 
 def fit_model(sobject_id):
+    global isochrone_table
     
     start_time = time.time()
 
@@ -136,8 +137,8 @@ def fit_model(sobject_id):
     # Same bounds for both components. Overwrite with model.bounds['rv_1'] == x if required
     model.set_bounds('teff', (3, 8))
     model.set_bounds('logg', (0.0, 5.0))
-    model.set_bounds('vmic', (0, 4))
-    model.set_bounds('vsini', (0, 30))
+    model.set_bounds('vmic', (0, 5))
+    model.set_bounds('vsini', (0, 50))
 
     age_min = (10**isochrone_table['logAge'].min()) / 1e9
     age_max = (10**isochrone_table['logAge'].max()) / 1e9
@@ -268,7 +269,7 @@ def fit_model(sobject_id):
     unmasked = unmasked_init
 
     # Produce a plot with the initial parameters
-    model.generate_model(spectrum)
+    model.generate_model()
     model.plot()
 
 
@@ -299,7 +300,7 @@ def fit_model(sobject_id):
             model_flux = af.get_flux_only(wave_init, model, spectrum, model.same_fe_h, unmasked, *model_parameters, plot=False)
             
             # Need to generate a model with the current parameters to determine residual
-            model.generate_model(spectrum)
+            model.generate_model()
             # residuals = model.get_residual()
 
             in_bounds = True
@@ -313,7 +314,7 @@ def fit_model(sobject_id):
             #         break
 
             if in_bounds:
-                residuals = model.get_rchi2()
+                residuals = model.get_rchi2(clipped=1.1)
                 residuals_list.append(residuals)
 
             previous_params = np.copy(particle_params)
@@ -356,10 +357,6 @@ def fit_model(sobject_id):
 
 
 
-    params_curve_fit = model.get_params(values_only=True)
-    params_curve_fit_list = ', '.join(map(str, params_curve_fit))
-    curve_fit_rchi2 = model.get_rchi2(with_bounds=False)
-
     # Get the original parameter values and bounds
     original_params = model.get_params(values_only=True)# model_parameters_iter1 # model.get_params(values_only=True)
     original_bounds = model.get_bounds(type='tuple')
@@ -378,19 +375,16 @@ def fit_model(sobject_id):
         margin = 0.2
             
     else:
-        # Normalize the bounds
-        # bounds = [(0, 1)] * len(bounds)
-        # unnormalized_bounds = original_bounds
         margin = 1
 
 
     bounds = [(max(lb, p - margin * abs(p)), min(ub, p + margin * abs(p)) ) for p, (lb, ub) in zip(normalized_x0, [(0, 1)] * len(bounds))]
 
     # Set a 0.1 margin on the bounds required for the interpolation. Otherwise we create an interpolator that is too large if the margin on the parameters is to expansive.
-    if margin == 1:
-        bounds[model.label('age')] = (max(bounds[model.label('age')][0], normalized_x0[model.label('age')] - 0.1), min(bounds[model.label('age')][1], normalized_x0[model.label('age')] + 0.1))
-        bounds[model.label('FeH')] = (max(bounds[model.label('FeH')][0], normalized_x0[model.label('FeH')] - 0.1), min(bounds[model.label('FeH')][1], normalized_x0[model.label('FeH')] + 0.1))
-        bounds[model.label('mass', comp=1)] = (max(bounds[model.label('mass', comp=1)][0], normalized_x0[model.label('mass', comp=1)] - 0.1), min(bounds[model.label('mass', comp=1)][1], normalized_x0[model.label('mass', comp=1)] + 0.1))
+    # if margin == 1:
+    bounds[model.label('age')] = (max(bounds[model.label('age')][0], normalized_x0[model.label('age')] - 0.01), min(bounds[model.label('age')][1], normalized_x0[model.label('age')] + 0.01))
+    bounds[model.label('mass', comp=1)] = (max(bounds[model.label('mass', comp=1)][0], normalized_x0[model.label('mass', comp=1)] - 0.1), min(bounds[model.label('mass', comp=1)][1], normalized_x0[model.label('mass', comp=1)] + 0.1))
+    bounds[model.label('FeH')] = (max(bounds[model.label('FeH')][0], normalized_x0[model.label('FeH')] - 0.1), min(bounds[model.label('FeH')][1], normalized_x0[model.label('FeH')] + 0.1))
 
 
     # Override these bounds
@@ -399,6 +393,11 @@ def fit_model(sobject_id):
     bounds[model.label('teff', 2)] = [0, 1]
     bounds[model.label('logg', 1)] = [0, 1]
     bounds[model.label('logg', 2)] = [0, 1]
+    
+    # These perform better unconstrained
+    bounds[model.label('vsini', 1)] = [0, 1]
+    bounds[model.label('vsini', 2)] = [0, 1]
+
     # Ensure these new bounds are also within the (0, 1) bounds
     bounds = [(max(0, lb), min(1, ub)) for lb, ub in bounds]
 
@@ -432,8 +431,9 @@ def fit_model(sobject_id):
     mass_range = unnormalized_bounds[model.label('mass', comp=1)]
 
     # Try creating the interpolator with the original range
-    max_expansions = 10
+    max_expansions = 20
     expansion_count = 0
+    contraction_factor = 0.05
     while expansion_count <= max_expansions:
         try:
             interpolator = af.create_interpolator(isochrone_table, age_range, m_h_range, mass_range)
@@ -442,8 +442,8 @@ def fit_model(sobject_id):
         except Exception as e:
             print(f"Interpolator creation failed on attempt {expansion_count + 1}: {e}")
             # Expand age_range, m_h_range, and mass_range
-            if age_range[1] - age_range[0] < 1:
-                delta = 1 + expansion_count * 0.1
+            if age_range[1] - age_range[0] < 0.5:
+                delta = 0.01 + expansion_count * contraction_factor
                 age_range = np.array([model.params['age'] - delta, model.params['age'] + delta])
                 age_range = np.log10(age_range * 1e9)
                 # Ensure the age range is within the bounds of the isochrone table
@@ -452,7 +452,7 @@ def fit_model(sobject_id):
             else:
                 print("Age range is already sufficiently large, attempting again without further expansion.")
 
-            delta = 0.1 + expansion_count * 0.1
+            delta = 0.01 + expansion_count * contraction_factor
             if m_h_range[1] - m_h_range[0] < 0.5:
                 m_h_range = [m_h_range[0] - delta, m_h_range[1] + delta]
                 # Ensure the m_h range is within the bounds of the isochrone table
@@ -490,6 +490,11 @@ def fit_model(sobject_id):
     print("Normalised bounds: ")
     print(model.get_bounds(type='tuple'))
 
+
+    params_curve_fit = model.get_params(values_only=True)
+    params_curve_fit_list = ', '.join(map(str, params_curve_fit))
+    curve_fit_rchi2 = model.get_rchi2(with_bounds=False, clipped=1.3)
+    
     # result = scipy.optimize.minimize(
     #     objective_function_norm,
     #     x0=normalized_x0, #model.get_params(values_only=True),
@@ -552,7 +557,7 @@ def fit_model(sobject_id):
     
     # Regenerate the model with the final parameters
     model.interpolate()
-    model.generate_model(spectrum)
+    model.generate_model()
 
     params = model.get_params(values_only=True)
     params_list = ', '.join(map(str, params))
@@ -562,6 +567,6 @@ def fit_model(sobject_id):
     interpolated_params = model.interpolate(return_values=True)
     interpolated_params = ', '.join(map(str, interpolated_params[0])) + ', ' + ', '.join(map(str, interpolated_params[1]))
 
-    print(model.get_residual(), model.get_rchi2(with_bounds=False), params_list, curve_fit_rchi2, params_curve_fit_list, interpolated_params, total_time)
+    print(model.get_residual(), model.get_rchi2(with_bounds=False, clipped=1.001), model.get_rchi2(with_bounds=False, clipped=1.1), model.get_rchi2(with_bounds=False, clipped=False), params_list, curve_fit_rchi2, params_curve_fit_list, interpolated_params, total_time, model.rchi2_single)
 
 fit_model(sobject_id)

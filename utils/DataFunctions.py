@@ -343,6 +343,39 @@ def read_binary_result_file(fn, coltype=0, cols=None, ignore_header=False):
             cols = ['sobject_id', 'residual', 'rchi2', 'f_contr', 'teff_1', 'logg_1', 'mass_1', 'rv_1', 'vmic_1', 'vsini_1', 'teff_2', 'logg_2', 'mass_2', 'rv_2', 'vmic_2', 'vsini_2', 'FeH', 'age']
         elif coltype == 4:
             cols = ['sobject_id', 'residual', 'rchi2', 'f_contr', 'mass_1', 'rv_1', 'vmic_1', 'vsini_1', 'mass_2', 'rv_2', 'vmic_2', 'vsini_2', 'FeH', 'age', 'teff_1', 'teff_2', 'logg_1', 'logg_2', 'logl_1', 'logl_2', 'curvefit_f_contr', 'curvefit_mass_1', 'curvefit_rv_1', 'curvefit_vmic_1', 'curvefit_vsini_1', 'curvefit_mass_2', 'curvefit_rv_2', 'curvefit_vmic_2', 'curvefit_vsini_2', 'curvefit_FeH', 'curvefit_age', 'curvefit_teff_1', 'curvefit_teff_2', 'curvefit_logg_1', 'curvefit_logg_2', 'curvefit_logl_1', 'curvefit_logl_2', 'processing_time']
+        elif coltype == 5:
+            # This is for PSO that includes curve fit rchi2 and all interpolated values for both components.
+            # print(model.get_residual(), model.get_rchi2(with_bounds=False), params_list, curve_fit_rchi2, params_curve_fit_list, interpolated_params, ', ' , total_time)
+            cols = ['sobject_id', 
+                    'residual', 
+                    'rchi2',
+                    'f_contr', 'mass_1', 'rv_1', 'vmic_1', 'vsini_1', 'teff_1', 'logg_1', 'logl_1', 'mass_2', 'rv_2', 'vmic_2', 'vsini_2', 'teff_2', 'logg_2', 'logl_2', 'FeH', 'age',
+                    'curvefit_rchi2',
+                    'curvefit_f_contr', 'curvefit_mass_1', 'curvefit_rv_1', 'curvefit_vmic_1', 'curvefit_vsini_1', 'curvefit_teff_1', 'curvefit_logg_1', 'curvefit_logl_1', 'curvefit_mass_2', 'curvefit_rv_2', 'curvefit_vmic_2', 'curvefit_vsini_2', 'curvefit_teff_2', 'curvefit_logg_2', 'curvefit_logl_2', 'curvefit_FeH', 'curvefit_age',
+                    'interpolated_logT_1', 'interpolated_logg_1', 'interpolated_logL_1', 'interpolated_Zini_1', 'interpolated_Z_1', 'interpolated_mass_1', 'interpolated_label_1', 'interpolated_Gmag_1', 'interpolated_GBPmag_1', 'interpolated_GRPmag_1', 'interpolated_Jmag_1', 'interpolated_Hmag_1', 'interpolated_Ksmag_1', 'interpolated_logT_2', 'interpolated_logg_2', 'interpolated_logL_2', 'interpolated_Zini_2', 'interpolated_Z_2', 'interpolated_mass_2', 'interpolated_label_2', 'interpolated_Gmag_2', 'interpolated_GBPmag_2', 'interpolated_GRPmag_2', 'interpolated_Jmag_2', 'interpolated_Hmag_2', 'interpolated_Ksmag_2',
+                    'processing_time']
+        elif coltype == 6:
+            # This is for PSO that includes curve fit rchi2 and all interpolated values for both components.
+            cols = ['sobject_id', 
+                    'residual', 
+                    'rchi2',
+                    'f_contr', 'mass_1', 'rv_1', 'vmic_1', 'vsini_1', 'teff_1', 'logg_1', 'logl_1', 'mass_2', 'rv_2', 'vmic_2', 'vsini_2', 'teff_2', 'logg_2', 'logl_2', 'FeH', 'age',
+                    'curvefit_rchi2',
+                    'curvefit_f_contr', 'curvefit_mass_1', 'curvefit_rv_1', 'curvefit_vmic_1', 'curvefit_vsini_1', 'curvefit_teff_1', 'curvefit_logg_1', 'curvefit_logl_1', 'curvefit_mass_2', 'curvefit_rv_2', 'curvefit_vmic_2', 'curvefit_vsini_2', 'curvefit_teff_2', 'curvefit_logg_2', 'curvefit_logl_2', 'curvefit_FeH', 'curvefit_age',
+                    'interpolated_logT_1', 'interpolated_logg_1', 'interpolated_logL_1', 'interpolated_Zini_1', 'interpolated_Z_1', 'interpolated_mass_1', 'interpolated_label_1', 'interpolated_Gmag_1', 'interpolated_GBPmag_1', 'interpolated_GRPmag_1', 'interpolated_Jmag_1', 'interpolated_Hmag_1', 'interpolated_Ksmag_1', 'interpolated_logT_2', 'interpolated_logg_2', 'interpolated_logL_2', 'interpolated_Zini_2', 'interpolated_Z_2', 'interpolated_mass_2', 'interpolated_label_2', 'interpolated_Gmag_2', 'interpolated_GBPmag_2', 'interpolated_GRPmag_2', 'interpolated_Jmag_2', 'interpolated_Hmag_2', 'interpolated_Ksmag_2',
+                    'processing_time',
+                    'single_rchi2']
+        elif coltype == 7:
+            # This is for PSO that includes curve fit rchi2 and all interpolated values for both components. Multiple rchi2s
+            cols = ['sobject_id', 
+                    'residual', 
+                    'rchi2_clipped', 'rchi2_clip_10', 'rchi2_unclipped',
+                    'f_contr', 'mass_1', 'rv_1', 'vmic_1', 'vsini_1', 'teff_1', 'logg_1', 'logl_1', 'mass_2', 'rv_2', 'vmic_2', 'vsini_2', 'teff_2', 'logg_2', 'logl_2', 'FeH', 'age',
+                    'curvefit_rchi2',
+                    'curvefit_f_contr', 'curvefit_mass_1', 'curvefit_rv_1', 'curvefit_vmic_1', 'curvefit_vsini_1', 'curvefit_teff_1', 'curvefit_logg_1', 'curvefit_logl_1', 'curvefit_mass_2', 'curvefit_rv_2', 'curvefit_vmic_2', 'curvefit_vsini_2', 'curvefit_teff_2', 'curvefit_logg_2', 'curvefit_logl_2', 'curvefit_FeH', 'curvefit_age',
+                    'interpolated_logT_1', 'interpolated_logg_1', 'interpolated_logL_1', 'interpolated_Zini_1', 'interpolated_Z_1', 'interpolated_mass_1', 'interpolated_label_1', 'interpolated_Gmag_1', 'interpolated_GBPmag_1', 'interpolated_GRPmag_1', 'interpolated_Jmag_1', 'interpolated_Hmag_1', 'interpolated_Ksmag_1', 'interpolated_logT_2', 'interpolated_logg_2', 'interpolated_logL_2', 'interpolated_Zini_2', 'interpolated_Z_2', 'interpolated_mass_2', 'interpolated_label_2', 'interpolated_Gmag_2', 'interpolated_GBPmag_2', 'interpolated_GRPmag_2', 'interpolated_Jmag_2', 'interpolated_Hmag_2', 'interpolated_Ksmag_2',
+                    'processing_time',
+                    'single_rchi2']
         else:
             cols = ['sobject_id', 'residual', 'rchi2', 'f_contr', 'mass_1', 'age_1', 'metallicity_1', 'rv_1', 'fe_h_1', 'vmic_1', 'vsini_1', 'teff_1', 'logg_1', 'logl_1', 'mass_2', 'age_2', 'metallicity_2', 'rv_2', 'fe_h_2', 'vmic_2', 'vsini_2', 'teff_2', 'logg_2', 'logl_2']
 
@@ -356,7 +389,8 @@ def read_binary_result_file(fn, coltype=0, cols=None, ignore_header=False):
             if ignore_header and line.startswith("#"):
                 continue  # Skip header if needed
 
-            row = custom_split(line.strip())  # Split line into columns
+            row = re.split(r'[,\s]+', line.strip())  # Split line by comma or space
+            # print(row)
 
             # Validate row length before adding
             if len(row) == len(cols):
@@ -379,6 +413,11 @@ def read_binary_result_file(fn, coltype=0, cols=None, ignore_header=False):
 
         # Compute delta_rv_GALAH
         data['delta_rv_GALAH'] = abs(data['rv_2'] - data['rv_1'])
+
+        # If single_rchi2 is present, move the column to the 3rd position
+        if 'single_rchi2' in data.columns:
+            single_rchi2_col = data.pop('single_rchi2')
+            data.insert(2, 'single_rchi2', single_rchi2_col)
 
         return data
     else:

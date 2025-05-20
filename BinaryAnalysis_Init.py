@@ -187,7 +187,8 @@ def run_script(args):
     try:
         # Run the command and check for success
         update_tracker([object_id], 1)
-        result = subprocess.run(command, check=True, capture_output=True, text=True)
+        # Timeout set to 2 hour
+        result = subprocess.run(command, check=True, capture_output=True, text=True, timeout=7200)
         print(f"Script completed successfully for object_id {object_id}.")
 
         # Split the output by lines and get the last line
@@ -209,6 +210,10 @@ def run_script(args):
         else:
             update_tracker([object_id], -1, err=final_line)
 
+
+    except subprocess.TimeoutExpired:
+        print(f"Script timed out after 60 minutes for object_id {object_id}.")
+        update_tracker([object_id], -1, err="Timeout expired after 60 minutes")
 
     except subprocess.CalledProcessError as e:
         # Handle the error (non-zero return code)

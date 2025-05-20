@@ -188,13 +188,13 @@ def plot_hr_GALAH(id=None, binary_data=None, lines=False, error_map=False, compo
         sample = GALAH_data[GALAH_data['sobject_id'].isin(binary_data['sobject_id'])]
 
         if components is False:
-            plt.scatter(sample['teff'], sample['logg'], alpha=0.5, color='red', s=25, label='Unresolved')
-            plt.scatter(binary_data['teff_1'] * 1e3, binary_data['logg_1'], alpha=0.5, color='blue', s=25, label='Primary')
-            plt.scatter(binary_data['teff_2'] * 1e3, binary_data['logg_2'], alpha=0.5, color='green', s=25, label='Secondary')
+            plt.scatter(sample['teff'], sample['logg'], alpha=0.5, color='grey', s=3, label='Unresolved')
+            plt.scatter(binary_data['teff_1'] * 1e3, binary_data['logg_1'], alpha=0.5, color='lightskyblue', s=5, label='Primary')
+            plt.scatter(binary_data['teff_2'] * 1e3, binary_data['logg_2'], alpha=0.5, color='coral', s=5, label='Secondary')
         elif components == 'primary':
-            plt.scatter(binary_data['teff_1'] * 1e3, binary_data['logg_1'], alpha=0.5, color='coral', s=10, label='Primary')
+            plt.scatter(binary_data['teff_1'] * 1e3, binary_data['logg_1'], alpha=0.5, color='coral', s=5, label='Primary')
         elif components == 'secondary':
-            plt.scatter(binary_data['teff_2'] * 1e3, binary_data['logg_2'], alpha=0.5, color='mediumseagreen', s=10, label='Secondary')
+            plt.scatter(binary_data['teff_2'] * 1e3, binary_data['logg_2'], alpha=0.5, color='mediumseagreen', s=5, label='Secondary')
 
         if lines:
             for i in range(len(sample)):
@@ -211,21 +211,33 @@ def plot_hr_GALAH(id=None, binary_data=None, lines=False, error_map=False, compo
                     color='green', alpha=0.1, ls='dashed'
                 )
 
-    elif error_map:
+    elif error_map is not None:
         # Get a combine dataframe containing all the data from the GALAH DR4 and the binary data
         combined_data = GALAH_data.merge(binary_data, how='inner', on='sobject_id')
         combined_data = combined_data.dropna(subset=['rchi2'])
-    
+        # print(error_map)
         if error_map is not True:
-            column = error_map
-            plt.scatter(combined_data['teff'], combined_data['logg'], 
-                        label='Unresolved',
-                        c=combined_data[column], 
-                        cmap='coolwarm', 
-                        alpha=0.5, 
-                        s=15)
-            # Colorbar
-            plt.colorbar(label=column)
+            # If error_map is a string, use it as the column name
+            # Check if the column exists in the combined data
+            if type(error_map) != str:
+                plt.scatter(combined_data['teff'], combined_data['logg'], 
+                            label='Unresolved',
+                            c=error_map, 
+                            cmap='coolwarm', 
+                            alpha=0.5, 
+                            s=15)
+                # Colorbar
+                plt.colorbar()
+            else:
+                column = error_map
+                plt.scatter(combined_data['teff'], combined_data['logg'], 
+                            label='Unresolved',
+                            c=combined_data[column], 
+                            cmap='coolwarm', 
+                            alpha=0.5, 
+                            s=15)
+                # Colorbar
+                plt.colorbar(label=column)
         else:
             # Plot a scatter showing the unresloved and color by rchi2
             plt.scatter(combined_data['teff'], combined_data['logg'], 
@@ -243,6 +255,12 @@ def plot_hr_GALAH(id=None, binary_data=None, lines=False, error_map=False, compo
     plt.ylabel('logg')
     plt.ylim(-1, 5)
     plt.legend()
+    # Increase point size in legend
+    legend = plt.gca().get_legend()
+    for text in legend.get_texts():
+        text.set_fontsize(20)
+    for line in legend.get_lines():
+        line.set_linewidth(5)
     plt.gca().invert_xaxis()
     plt.gca().invert_yaxis()
     plt.xlim(8000, 3000)

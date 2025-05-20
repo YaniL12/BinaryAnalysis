@@ -105,7 +105,7 @@ def load_isochrones(type='', extended=False):
         return None
 
 
-def create_interpolator(isochrone_table, age_range, m_h_range, mass_range):
+def create_interpolator(isochrone_table, age_range, m_h_range, mass_range, table_only=False):
     """Attempts to create an interpolator with given bounds."""
     isochrone_table_reduced = isochrone_table[
         (isochrone_table['logAge'] >= age_range[0]) &
@@ -117,6 +117,9 @@ def create_interpolator(isochrone_table, age_range, m_h_range, mass_range):
     ]
 
     print(f"Isochrone table size: {len(isochrone_table_reduced)}")
+
+    if table_only:
+        return isochrone_table_reduced
     
     if len(isochrone_table_reduced) < 100:  # Check if there are enough points for interpolation
         raise ValueError("Insufficient data points for interpolation.")
@@ -126,7 +129,7 @@ def create_interpolator(isochrone_table, age_range, m_h_range, mass_range):
 
     # Extract input (mass, logAge, m_h) and output (logT, logg, logL)
     parsec_points = np.array([isochrone_table_reduced['mini'], isochrone_table_reduced['logAge'], isochrone_table_reduced['m_h']]).T
-    parsec_values = np.array([isochrone_table_reduced['logT'], isochrone_table_reduced['logg'], isochrone_table_reduced['logL'], isochrone_table_reduced['mass']]).T
+    # parsec_values = np.array([isochrone_table_reduced['logT'], isochrone_table_reduced['logg'], isochrone_table_reduced['logL'], isochrone_table_reduced['mass']]).T
 
     # cols = ['logT', 'logg', 'logL', 'mass']
     cols = ['logT', 'logg', 'logL', 'Zini', 'Z', 'mass', 'label', 
